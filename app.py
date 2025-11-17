@@ -26,7 +26,7 @@ except Exception as e:
     print("   'service-account.json' 파일이 올바른지 확인하세요.")
 
 
-# --- 2. 썸네일지정_완료.py의 핵심 로직 (수정 4: 'GPT' 피드백) ---
+# --- 2. 썸네일지정_완료.py의 핵심 로직 ---
 # (Colab이 아닌 서버 환경에 맞게 일부 수정됨)
 
 LIKELIHOOD_SCORE = {
