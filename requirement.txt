@@ -2,7 +2,7 @@ openapi: 3.0.0 info: title: "WooriZip-AI 썸네일 분석기 API" description: "
 
 servers:
 
-url: "http://3.226.76.135:5000" description: "개발/프로덕션 서버 (EC2)"
+url: "http://3.226.76.135:8000" description: "개발/프로덕션 서버 (EC2)"
 paths: /analyze: post: summary: "동영상 썸네일 분석" description: "동영상 파일을 받아 AI가 '기쁨' 점수 및 품질을 기반으로 베스트 썸네일을 선정합니다." operationId: "analyzeVideo"
 
   requestBody:
