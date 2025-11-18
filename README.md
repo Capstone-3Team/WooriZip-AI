@@ -9,10 +9,6 @@
 ```
 http://3.226.76.135:8000
 ```
-
-### ⭐ Swagger 문서
-```
-http://3.226.76.135:8000/docs
 ```
 
 ---
@@ -184,29 +180,11 @@ docker-compose up -d
 ```
 Client → Nginx (80/443) → FastAPI (8000)
 ```
-
----
-
-# 🔐 HTTPS (Optional)
-
-`nginx.conf`에 SSL 인증서(Let’s Encrypt) 경로를 설정하면  
-HTTPS 배포가 가능합니다.
-
----
-
-# 👥 Who Should Read This?
-
-- 프론트엔드 개발자: 이미지 전송 방식 & API 구조  
-- 백엔드 개발자: EC2 배포 & 서버 구성  
-- AI 개발자: 모델 로직 확인  
-- PM/팀원: 시스템 개요 이해  
-
 ---
 
 # 🎯 Summary
 
 - API 서버: `http://3.226.76.135:8000`
-- Swagger UI: `http://3.226.76.135:8000/docs`
 - 프론트는 프레임을 반복 업로드하여 실시간처럼 사용
 - EC2 보안그룹에서 8000 포트 Must Open!
 
