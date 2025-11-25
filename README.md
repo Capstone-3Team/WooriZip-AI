@@ -1,4 +1,4 @@
-## 🐶 Pet Detector AI  
+## 🐶 Pet Detector AI  (일상피드 인식용)
 Google Cloud Vision + OpenCV 기반 반려동물 자동 분류 API
 
 ---
