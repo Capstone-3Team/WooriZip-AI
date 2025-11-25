@@ -34,7 +34,8 @@ def analyze():
         return jsonify({
             "message": "success",
             "transcript": result["transcript"],
-            "summary": result["summary"]
+            "summary": result["summary"],
+            "title": result["title"]
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
