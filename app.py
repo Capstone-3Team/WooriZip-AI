@@ -64,16 +64,17 @@ def stt():
         return jsonify({
             "message": "success",
             "summary": result["summary"],
-            "title": result["title"],
+            "title": result["title"]
         })
 
     except Exception as e:
-        print(f"요약/제목 분석 오류: {e}")
+        print(f"분석 오류: {e}")
         return jsonify({"error": str(e)}), 500
 
     finally:
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
+
 
 
 if __name__ == "__main__":
