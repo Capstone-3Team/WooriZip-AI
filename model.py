@@ -60,42 +60,55 @@ LIKELIHOOD_SCORE = {
 }
 
 def analyze_batch(frames):
-    requests = []
-    for f in frames:
-        image = vision.Image(content=f["image_bytes"])
-        req = vision.AnnotateImageRequest(
-            image=image,
-            features=[vision.Feature(type_=vision.Feature.Type.FACE_DETECTION)]
-        )
-        requests.append(req)
+    """
+    Vision API는 요청당 최대 16장의 이미지만 허용.
+    따라서 16개씩 쪼개서 여러 번 호출한 뒤 결과를 합쳐야 한다.
+    """
+    MAX_BATCH = 16
+    all_results = []
 
-    response = vision_client.batch_annotate_images(requests=requests)
-    results = []
+    # 16장씩 chunking
+    for i in range(0, len(frames), MAX_BATCH):
+        chunk = frames[i:i + MAX_BATCH]
 
-    for frame, res in zip(frames, response.responses):
-        faces = res.face_annotations
-        if not faces:
-            frame["score"] = 0
-            results.append(frame)
-            continue
+        requests = []
+        for f in chunk:
+            image = vision.Image(content=f["image_bytes"])
+            req = vision.AnnotateImageRequest(
+                image=image,
+                features=[vision.Feature(type_=vision.Feature.Type.FACE_DETECTION)]
+            )
+            requests.append(req)
 
-        total_score = 0
-        for face in faces:
-            base_quality = 0
-            if LIKELIHOOD_SCORE[face.blurred_likelihood] < 3:
-                base_quality += 40
-            if LIKELIHOOD_SCORE[face.under_exposed_likelihood] < 3:
-                base_quality += 20
-            if abs(face.roll_angle) < 20 and abs(face.pan_angle) < 20:
-                base_quality += 20
+        response = vision_client.batch_annotate_images(requests=requests)
 
-            joy_score = LIKELIHOOD_SCORE[face.joy_likelihood] / 5.0 * 300
-            total_score += base_quality + joy_score
+        # chunk 결과 처리
+        for frame, res in zip(chunk, response.responses):
+            faces = res.face_annotations
 
-        frame["score"] = total_score
-        results.append(frame)
+            if not faces:
+                frame["score"] = 0
+                all_results.append(frame)
+                continue
 
-    return results
+            total_score = 0
+            for face in faces:
+                base_quality = 0
+                if LIKELIHOOD_SCORE[face.blurred_likelihood] < 3:
+                    base_quality += 40
+                if LIKELIHOOD_SCORE[face.under_exposed_likelihood] < 3:
+                    base_quality += 20
+                if abs(face.roll_angle) < 20 and abs(face.pan_angle) < 20:
+                    base_quality += 20
+
+                joy_score = LIKELIHOOD_SCORE[face.joy_likelihood] / 5 * 300
+                total_score += base_quality + joy_score
+
+            frame["score"] = total_score
+            all_results.append(frame)
+
+    return all_results
+
 
 
 # ============================================================
