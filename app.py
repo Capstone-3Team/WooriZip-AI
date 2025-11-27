@@ -40,11 +40,10 @@ def thumbnail():
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-
 # =======================================
-# 2. STT + 요약 + 제목 생성 API
+# 2. 요약 + 제목 생성 API
 # =======================================
-@app.route("/stt", methods=["POST"])
+@app.route("/stt", methods=["POST"])   # 필요하면 /summary 로 바꿔도 됨
 def stt():
     api_key = os.environ.get("GOOGLE_API_KEY", None)
     if not api_key:
@@ -62,19 +61,15 @@ def stt():
 
         return jsonify({
             "message": "success",
-            "transcript": result["transcript"],
             "summary": result["summary"],
             "title": result["title"]
         })
 
     except Exception as e:
-        print(f"STT 분석 오류: {e}")
+        print(f"요약/제목 생성 오류: {e}")
         return jsonify({"error": str(e)}), 500
 
     finally:
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
 
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
