@@ -1,9 +1,5 @@
-# model.py
 """
 웃는 얼굴 썸네일 + 요약/제목 생성 통합 AI 모듈
-
-- find_best_thumbnail(video_path): Google Cloud Vision 기반 웃는 얼굴 썸네일 선정
-- analyze_video_content(video_path, api_key): Gemini 2.5 Flash 기반 내용 요약 + 제목 생성
 """
 
 import os
@@ -15,6 +11,7 @@ from pydub import AudioSegment
 from google.cloud import vision
 import google.generativeai as genai
 import mediapipe as mp
+
 
 # ============================================================
 # 0. Vision API 초기화
@@ -28,7 +25,7 @@ vision_client = vision.ImageAnnotatorClient()
 mp_face = mp.solutions.face_detection
 mp_facedetector = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.45)
 
-# Likelihood 매핑 (문자열 기준)
+# Likelihood 매핑
 LIKELIHOOD_SCORE = {
     "UNKNOWN": 0,
     "VERY_UNLIKELY": 0,
@@ -40,20 +37,14 @@ LIKELIHOOD_SCORE = {
 
 
 # ============================================================
-# 1. Mediapipe 1차 필터링 (빠른 얼굴/웃음 후보 탐지)
+# 1. Mediapipe 1차 필터링 — 웃음 후보
 # ============================================================
 def is_smile_candidate(frame):
-    """
-    Mediapipe로 빠르게 웃을 가능성 있는 프레임인지 판단
-    - 얼굴이 있는지
-    - 입 주변 변화량(variance)으로 대략적인 표정 변화 체크
-    """
     results = mp_facedetector.process(frame)
     if not results.detections:
         return False
 
     det = results.detections[0]
-
     box = det.location_data.relative_bounding_box
     h, w, _ = frame.shape
     x1, y1 = int(box.xmin * w), int(box.ymin * h)
@@ -65,26 +56,19 @@ def is_smile_candidate(frame):
 
     roi_h = face_roi.shape[0]
     mouth_region = face_roi[int(roi_h * 0.55): int(roi_h * 0.85), :]
-
     if mouth_region.size == 0:
         return False
 
     gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
     variance = gray.var()
 
-    return variance > 40  # 경험적 threshold
+    return variance > 40
 
 
 # ============================================================
-# 2. Vision API Batch 얼굴 분석 (정확한 감정/웃음 판별)
-#    - 요청당 최대 16장 제한 때문에 chunk 처리
-#    - Likelihood ENUM → .name 으로 변환해서 점수 매핑
+# 2. Vision API — Batch 얼굴 분석 (16장씩)
 # ============================================================
 def analyze_batch(frames):
-    """
-    frames: [{ "time_sec", "image_bytes", "image_cv2" }, ...]
-    각 frame에 "score" 필드를 추가해서 반환
-    """
     MAX_BATCH = 16
     all_results = []
 
@@ -112,21 +96,18 @@ def analyze_batch(frames):
 
             total_score = 0
             for face in faces:
-                # ENUM → 문자열(.name) 변환 후 매핑
-                blur_val = LIKELIHOOD_SCORE.get(face.blurred_likelihood.name, 0)
-                under_val = LIKELIHOOD_SCORE.get(face.under_exposed_likelihood.name, 0)
-                joy_val = LIKELIHOOD_SCORE.get(face.joy_likelihood.name, 0)
+                blur = LIKELIHOOD_SCORE.get(face.blurred_likelihood.name, 0)
+                under = LIKELIHOOD_SCORE.get(face.under_exposed_likelihood.name, 0)
+                joy = LIKELIHOOD_SCORE.get(face.joy_likelihood.name, 0)
 
-                base_quality = 0
-                if blur_val < 3:
-                    base_quality += 40
-                if under_val < 3:
-                    base_quality += 20
+                base_q = 0
+                if blur < 3: base_q += 40
+                if under < 3: base_q += 20
                 if abs(face.roll_angle) < 20 and abs(face.pan_angle) < 20:
-                    base_quality += 20
+                    base_q += 20
 
-                joy_score = joy_val / 5.0 * 300
-                total_score += base_quality + joy_score
+                joy_score = joy / 5.0 * 300
+                total_score += base_q + joy_score
 
             frame["score"] = total_score
             all_results.append(frame)
@@ -138,10 +119,6 @@ def analyze_batch(frames):
 # 3. 프레임 추출 + 1차 필터링
 # ============================================================
 def extract_candidate_frames(video_path, sec_interval=0.25):
-    """
-    모든 프레임을 보지 않고,
-    sec_interval 간격으로 샘플링 + Mediapipe로 웃는 후보만 남김
-    """
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     step = max(int(fps * sec_interval), 1)
@@ -159,36 +136,30 @@ def extract_candidate_frames(video_path, sec_interval=0.25):
         if frame_idx % step == 0:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if is_smile_candidate(rgb):
-                ok, buffer = cv2.imencode(".jpg", frame)
+                ok, buf = cv2.imencode(".jpg", frame)
                 if ok:
                     frames.append({
                         "time_sec": frame_idx / fps,
-                        "image_bytes": buffer.tobytes(),
+                        "image_bytes": buf.tobytes(),
                         "image_cv2": frame,
                     })
 
         frame_idx += 1
 
     cap.release()
-
-    if len(frames) == 0:
-        print(f"😢 전체 프레임 {total}개 중 웃는 후보 없음")
-    else:
-        print(f"⚡ 전체 프레임 {total} → 후보 {len(frames)}개")
+    print(f"⚡ 전체 {total}프레임 → 후보 {len(frames)}개")
 
     return frames
 
 
 # ============================================================
-# 4. 메인: 최종 썸네일 찾기
+# 4. 최종 썸네일
 # ============================================================
 def find_best_thumbnail(video_path):
     candidates = extract_candidate_frames(video_path)
-
     if len(candidates) == 0:
         return None
 
-    # 비용 절약용 상한선
     if len(candidates) > 30:
         candidates = candidates[:30]
 
@@ -196,97 +167,82 @@ def find_best_thumbnail(video_path):
     scored.sort(key=lambda x: x["score"], reverse=True)
     best = scored[0]
 
-    print(f"🎉 최종 썸네일 (score={best['score']:.1f}, time={best['time_sec']:.2f}s)")
+    print(f"🎉 최종 썸네일 선택 (score={best['score']:.1f}, {best['time_sec']:.2f}s)")
 
-    ok, buffer = cv2.imencode(".jpg", best["image_cv2"])
-    img_base64 = base64.b64encode(buffer).decode("utf-8")
+    ok, buf = cv2.imencode(".jpg", best["image_cv2"])
+    img_b64 = base64.b64encode(buf).decode("utf-8")
 
     return {
         "time_sec": best["time_sec"],
         "score": best["score"],
-        "image_base64": img_base64,
+        "image_base64": img_b64,
     }
 
 
-
-import os
-import json
-from pydub import AudioSegment
-import google.generativeai as genai
-
-# =======================================
-# 2. 요약 + 제목 생성 (Gemini 2.5 Flash)
-# =======================================
-
+# ============================================================
+# 5. STT — 요약 + 제목 생성 (안전 버전)
+# ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
-    """
-    비디오에서 오디오만 MP3로 추출
-    """
     try:
-        video = AudioSegment.from_file(video_path)
-        video.export(audio_path, format="mp3")
+        audio = AudioSegment.from_file(video_path)
+        audio.export(audio_path, format="mp3")
         return audio_path
     except Exception as e:
         raise RuntimeError(f"Audio extraction failed: {e}")
 
 
 def analyze_video_content(video_path, api_key):
-    """
-    비디오 → 오디오 추출 → Gemini로 요약 + 제목 생성
-    (upload_file 제거 / 바이너리 직접 입력)
-    """
-    if api_key is None or api_key.strip() == "":
+    if not api_key or api_key.strip() == "":
         raise ValueError("유효한 Google API Key가 필요합니다.")
 
-    # Gemini API 설정
     genai.configure(api_key=api_key)
 
-    # 1. 오디오 파일 추출
-    audio_file_path = extract_audio(video_path)
+    audio_path = extract_audio(video_path)
 
     try:
-        # 2. 오디오 바이너리 직접 읽기
-        with open(audio_file_path, "rb") as f:
+        with open(audio_path, "rb") as f:
             audio_bytes = f.read()
 
-        # 3. 빠른 모델
         model = genai.GenerativeModel("models/gemini-2.5-flash")
 
-        # 4. 간결하고 속도 빠른 프롬프트
         prompt = """
-        이 오디오 내용을 한국어로 한 문장 요약하고,
-        영상의 주제를 반영한 간결한 제목을 생성하세요.
+JSON만 출력하세요. 절대 설명 금지.
+{
+  "summary": "...",
+  "title": "..."
+}
+"""
 
-        반드시 JSON:
-        {
-          "summary": "...",
-          "title": "..."
-        }
-        """
-
-        # 5. 파일 업로드 대신 바이너리 직접 전달
         response = model.generate_content(
-            [ 
-                {"mime_type": "audio/mpeg", "data": audio_bytes}, 
+            [
+                {"mime_type": "audio/mpeg", "data": audio_bytes},
                 prompt
             ]
         )
 
-        clean_text = response.text.strip().lstrip("```json").rstrip("```").strip()
-        results = json.loads(clean_text)
+        # 응답 text 자체가 없는 경우
+        if not response.text:
+            raise RuntimeError("Gemini 응답이 없습니다. (response.text is None)")
 
-        summary = results.get("summary", "")
-        title = results.get("title", "")
+        clean = (
+            response.text
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
 
-    except Exception as e:
-        raise RuntimeError(f"Gemini 분석 오류: {e}")
+        try:
+            data = json.loads(clean)
+        except Exception:
+            print("❌ Gemini JSON 파싱 실패 — 응답 원본:")
+            print(response.text)
+            raise RuntimeError("Gemini JSON 형식 오류")
+
+        return {
+            "summary": data.get("summary", ""),
+            "title": data.get("title", "")
+        }
 
     finally:
-        # 임시 오디오 삭제
-        if os.path.exists(audio_file_path):
-            os.remove(audio_file_path)
-
-    return {
-        "summary": summary,
-        "title": title
-    }
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
