@@ -1,5 +1,6 @@
 """
 웃는 얼굴 썸네일 + 요약/제목 생성 통합 AI 모듈
+속도 개선 반영: 프레임수 감소, Vision API 호출 축소, STT 오디오 길이 단축
 """
 
 import os
@@ -7,11 +8,10 @@ import cv2
 import base64
 import json
 import numpy as np
-from pydub import AudioSegment
+from pydub import AudioSegment, effects, silence
 from google.cloud import vision
 import google.generativeai as genai
 import mediapipe as mp
-
 
 # ============================================================
 # 0. Vision API 초기화
@@ -62,7 +62,8 @@ def is_smile_candidate(frame):
     gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
     variance = gray.var()
 
-    return variance > 40
+    # 🚀 threshold 강화 → 후보 수 감소
+    return variance > 60
 
 
 # ============================================================
@@ -118,7 +119,8 @@ def analyze_batch(frames):
 # ============================================================
 # 3. 프레임 추출 + 1차 필터링
 # ============================================================
-def extract_candidate_frames(video_path, sec_interval=0.25):
+def extract_candidate_frames(video_path, sec_interval=0.7):
+    """0.7초마다 샘플링하여 Mediapipe로 후보 추림 → 속도 매우 빨라짐"""
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     step = max(int(fps * sec_interval), 1)
@@ -148,7 +150,6 @@ def extract_candidate_frames(video_path, sec_interval=0.25):
 
     cap.release()
     print(f"⚡ 전체 {total}프레임 → 후보 {len(frames)}개")
-
     return frames
 
 
@@ -157,17 +158,17 @@ def extract_candidate_frames(video_path, sec_interval=0.25):
 # ============================================================
 def find_best_thumbnail(video_path):
     candidates = extract_candidate_frames(video_path)
+
     if len(candidates) == 0:
         return None
 
-    if len(candidates) > 30:
-        candidates = candidates[:30]
+    # 🚀 Vision API 호출 수 감소 (30 → 12)
+    if len(candidates) > 12:
+        candidates = candidates[:12]
 
     scored = analyze_batch(candidates)
     scored.sort(key=lambda x: x["score"], reverse=True)
     best = scored[0]
-
-    print(f"🎉 최종 썸네일 선택 (score={best['score']:.1f}, {best['time_sec']:.2f}s)")
 
     ok, buf = cv2.imencode(".jpg", best["image_cv2"])
     img_b64 = base64.b64encode(buf).decode("utf-8")
@@ -180,13 +181,26 @@ def find_best_thumbnail(video_path):
 
 
 # ============================================================
-# 5. STT — 요약 + 제목 생성 (안전 버전)
+# 5. STT — 요약 + 제목 (오디오 길이 단축)
 # ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
+    """무음 제거 + 속도 1.15x → 오디오 길이 자체를 단축"""
     try:
         audio = AudioSegment.from_file(video_path)
+
+        # 무음 제거
+        audio = silence.strip_silence(
+            audio,
+            silence_thresh=-45,  # 감지 민감도
+            padding=200
+        )
+
+        # 1.15배 속도 (pitch 유지)
+        audio = effects.speedup(audio, playback_speed=1.15)
+
         audio.export(audio_path, format="mp3")
         return audio_path
+
     except Exception as e:
         raise RuntimeError(f"Audio extraction failed: {e}")
 
@@ -206,7 +220,7 @@ def analyze_video_content(video_path, api_key):
         model = genai.GenerativeModel("models/gemini-2.5-flash")
 
         prompt = """
-JSON만 출력하세요. 절대 설명 금지.
+JSON만 출력하세요.
 {
   "summary": "...",
   "title": "..."
@@ -220,9 +234,8 @@ JSON만 출력하세요. 절대 설명 금지.
             ]
         )
 
-        # 응답 text 자체가 없는 경우
         if not response.text:
-            raise RuntimeError("Gemini 응답이 없습니다. (response.text is None)")
+            raise RuntimeError("Gemini 응답 없음 (response.text is None)")
 
         clean = (
             response.text
@@ -233,10 +246,10 @@ JSON만 출력하세요. 절대 설명 금지.
 
         try:
             data = json.loads(clean)
-        except Exception:
+        except:
             print("❌ Gemini JSON 파싱 실패 — 응답 원본:")
             print(response.text)
-            raise RuntimeError("Gemini JSON 형식 오류")
+            raise RuntimeError("Gemini JSON 오류")
 
         return {
             "summary": data.get("summary", ""),
