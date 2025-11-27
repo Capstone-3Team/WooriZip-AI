@@ -1,5 +1,6 @@
 """
-웃는 얼굴 썸네일 + 요약/제목 생성 (초고속 최적화 버전)
+웃는 얼굴 썸네일 + 요약/제목 생성
+세로 영상 자동 회전 보정 + FaceMesh + Flash Lite (최적화 버전)
 """
 
 import os
@@ -7,6 +8,7 @@ import cv2
 import base64
 import json
 import numpy as np
+import subprocess
 from pydub import AudioSegment
 from pydub.effects import speedup
 from google.cloud import vision
@@ -22,11 +24,93 @@ if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
 
 vision_client = vision.ImageAnnotatorClient()
 
-# Mediapipe 초기화
-mp_face = mp.solutions.face_detection
-mp_facedetector = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.50)
 
-# Likelihood 매핑
+# ============================================================
+# 1. ffprobe로 회전 정보 읽기
+# ============================================================
+def get_rotation(video_path):
+    """
+    ffprobe로 영상 metadata에서 회전 정보 읽기
+    90 / 180 / 270 / 없으면 0
+    """
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream_tags=rotate",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path
+        ]
+        output = subprocess.check_output(cmd).decode().strip()
+        return int(output) if output else 0
+    except:
+        return 0
+
+
+def correct_rotation(frame, rotation):
+    """
+    회전 metadata에 따라 프레임 회전 보정
+    """
+    if rotation == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif rotation == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
+
+
+# ============================================================
+# 2. FaceMesh 기반 필터링
+# ============================================================
+mp_face_mesh = mp.solutions.face_mesh
+mesh_detector = mp_face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
+UPPER_LIP = 13
+LOWER_LIP = 14
+LEFT_MOUTH = 61
+RIGHT_MOUTH = 291
+
+
+def is_smile_candidate(frame):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = mesh_detector.process(rgb)
+
+    if not result.multi_face_landmarks:
+        return False
+
+    lm = result.multi_face_landmarks[0].landmark
+    h, w, _ = frame.shape
+
+    def pos(idx):
+        return np.array([lm[idx].x * w, lm[idx].y * h])
+
+    upper = pos(UPPER_LIP)
+    lower = pos(LOWER_LIP)
+    left = pos(LEFT_MOUTH)
+    right = pos(RIGHT_MOUTH)
+
+    # 1) 입 벌어짐
+    lip_distance = np.linalg.norm(upper - lower)
+
+    # 2) 입꼬리 곡률
+    center = (upper + lower) / 2
+    curvature = (center[1] - left[1]) + (center[1] - right[1])
+
+    # 기본 smile score
+    smile_score = curvature * 0.6 + lip_distance * 0.4
+
+    # threshold 강화 제거 → 기본값만
+    return smile_score > 6
+
+
+# ============================================================
+# 3. Vision API Batch 분석
+# ============================================================
 LIKELIHOOD_SCORE = {
     "UNKNOWN": 0,
     "VERY_UNLIKELY": 0,
@@ -36,43 +120,6 @@ LIKELIHOOD_SCORE = {
     "VERY_LIKELY": 5,
 }
 
-
-# ============================================================
-# 1. Mediapipe 후보 필터링 (강화 버전)
-# ============================================================
-def is_smile_candidate(frame):
-    results = mp_facedetector.process(frame)
-    if not results.detections:
-        return False
-
-    det = results.detections[0]
-
-    box = det.location_data.relative_bounding_box
-    h, w, _ = frame.shape
-    x1, y1 = int(box.xmin * w), int(box.ymin * h)
-    x2, y2 = x1 + int(box.width * w), y1 + int(box.height * h)
-
-    face_roi = frame[y1:y2, x1:x2]
-    if face_roi.size == 0:
-        return False
-
-    roi_h = face_roi.shape[0]
-    mouth_region = face_roi[int(roi_h * 0.55): int(roi_h * 0.85), :]
-    if mouth_region.size == 0:
-        return False
-
-    gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
-    variance = gray.var()
-
-    # ⭐ NEW: percentile 기반 threshold (필터 더 강함)
-    threshold = np.percentile(gray, 75)
-
-    return variance > threshold
-
-
-# ============================================================
-# 2. Vision API Batch 분석 (16개 단위)
-# ============================================================
 def analyze_batch(frames):
     MAX_BATCH = 16
     all_results = []
@@ -92,28 +139,26 @@ def analyze_batch(frames):
 
         for frame, res in zip(chunk, response.responses):
             faces = res.face_annotations
+
             if not faces:
                 frame["score"] = 0
                 all_results.append(frame)
                 continue
 
             total_score = 0
-
             for face in faces:
                 blur_val = LIKELIHOOD_SCORE.get(face.blurred_likelihood.name, 0)
                 under_val = LIKELIHOOD_SCORE.get(face.under_exposed_likelihood.name, 0)
                 joy_val = LIKELIHOOD_SCORE.get(face.joy_likelihood.name, 0)
 
-                base_quality = 0
-                if blur_val < 3:
-                    base_quality += 40
-                if under_val < 3:
-                    base_quality += 20
+                base = 0
+                if blur_val < 3: base += 40
+                if under_val < 3: base += 20
                 if abs(face.roll_angle) < 20 and abs(face.pan_angle) < 20:
-                    base_quality += 20
+                    base += 20
 
                 joy_score = joy_val / 5.0 * 300
-                total_score += base_quality + joy_score
+                total_score += base + joy_score
 
             frame["score"] = total_score
             all_results.append(frame)
@@ -122,9 +167,11 @@ def analyze_batch(frames):
 
 
 # ============================================================
-# 3. 빠른 후보 프레임 추출
+# 4. 회전 보정 포함 후보 프레임 추출
 # ============================================================
 def extract_candidate_frames(video_path, sec_interval=0.35):
+    rotation = get_rotation(video_path)
+
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     step = max(int(fps * sec_interval), 1)
@@ -137,29 +184,30 @@ def extract_candidate_frames(video_path, sec_interval=0.35):
         ret, frame = cap.read()
         if not ret:
             break
-        total += 1
 
+        # ⭐ 회전 보정
+        frame = correct_rotation(frame, rotation)
+
+        total += 1
         if frame_idx % step == 0:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            if is_smile_candidate(rgb):
+            if is_smile_candidate(frame):
                 ok, buffer = cv2.imencode(".jpg", frame)
                 if ok:
                     frames.append({
                         "time_sec": frame_idx / fps,
-                        "image_bytes": buffer.tobytes(),
                         "image_cv2": frame,
+                        "image_bytes": buffer.tobytes(),
                     })
 
         frame_idx += 1
 
     cap.release()
-
     print(f"⚡ 전체 {total}프레임 → 후보 {len(frames)}개")
     return frames
 
 
 # ============================================================
-# 4. 최종 썸네일 선택
+# 5. 최종 썸네일
 # ============================================================
 def find_best_thumbnail(video_path):
     candidates = extract_candidate_frames(video_path)
@@ -167,18 +215,17 @@ def find_best_thumbnail(video_path):
     if len(candidates) == 0:
         return None
 
-    # 비용절감: 16장까지만 Vision 호출
-    if len(candidates) > 16:
-        candidates = candidates[:16]
+    if len(candidates) > 12:
+        candidates = candidates[:12]
 
     scored = analyze_batch(candidates)
     scored.sort(key=lambda x: x["score"], reverse=True)
     best = scored[0]
 
-    print(f"🎉 최종 썸네일 (score={best['score']:.1f}, time={best['time_sec']:.2f}s)")
-
     ok, buffer = cv2.imencode(".jpg", best["image_cv2"])
     img_base64 = base64.b64encode(buffer).decode("utf-8")
+
+    print(f"🎉 최종 썸네일 (score={best['score']:.1f}, time={best['time_sec']:.2f}s)")
 
     return {
         "time_sec": best["time_sec"],
@@ -188,16 +235,16 @@ def find_best_thumbnail(video_path):
 
 
 # ============================================================
-# 5. 요약 + 제목 생성 (Flash Lite + 1.2x 오디오)
+# 6. 오디오 → 1.2x → Gemini Flash Lite
 # ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     try:
         audio = AudioSegment.from_file(video_path)
 
-        # ⭐ NEW: 1.2x 속도 증가 (pitch 변화 거의 없음)
+        # 오디오 길이 감소 (1.2x)
         audio = speedup(audio, playback_speed=1.2, chunk_size=60, crossfade=40)
-
         audio.export(audio_path, format="mp3")
+
         return audio_path
     except Exception as e:
         raise RuntimeError(f"Audio extraction failed: {e}")
