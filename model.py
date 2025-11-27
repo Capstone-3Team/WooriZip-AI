@@ -7,241 +7,190 @@
 """
 
 import os
-import json
-import base64
-
 import cv2
+import base64
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from google.cloud import vision
-import google.generativeai as genai
-from pydub import AudioSegment
+import mediapipe as mp
+
+# ============================================================
+# 0. Vision API 초기화
+# ============================================================
+if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service-account.json"
+
+vision_client = vision.ImageAnnotatorClient()
+
+# Mediapipe 초기화
+mp_face = mp.solutions.face_detection
+mp_facedetector = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.45)
 
 
-# =======================================
-# 0. Google Vision 클라이언트 초기화
-# =======================================
+# ============================================================
+# 1. Mediapipe 1차 필터링 (빠른 얼굴/웃음 후보 탐지)
+# ============================================================
 
-try:
-    # 환경변수에 서비스 계정 키 경로가 없으면 기본 파일명 사용
-    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service-account.json"
+def is_smile_candidate(frame):
+    """
+    Mediapipe로 빠르게 웃을 가능성 있는 프레임인지 판단
+    - 입이 크게 벌어졌는지
+    - 입꼬리가 올라갔는지
+    """
 
-    vision_client = vision.ImageAnnotatorClient()
-    print("✅ (model.py) Vision AI 클라이언트가 초기화되었습니다.")
-except Exception as e:
-    print(f"❌ (model.py) Vision AI 클라이언트 초기화 오류: {e}")
-    print("   'service-account.json' 파일이 올바른지 확인하세요.")
+    results = mp_facedetector.process(frame)
+    if not results.detections:
+        return False  # 얼굴 없음 → 제거
+
+    det = results.detections[0]
+
+    # Bounding box
+    box = det.location_data.relative_bounding_box
+    h, w, _ = frame.shape
+    x1, y1 = int(box.xmin * w), int(box.ymin * h)
+    x2, y2 = x1 + int(box.width * w), y1 + int(box.height * h)
+
+    face_roi = frame[y1:y2, x1:x2]
+    if face_roi.size == 0:
+        return False
+
+    # 단순 입색역(하단 40%)에서 입 벌어짐 체크 → 매우 빠름
+    roi_h = face_roi.shape[0]
+    mouth_region = face_roi[int(roi_h*0.55): int(roi_h*0.85), :]
+
+    if mouth_region.size == 0:
+        return False
+
+    # 입 주변 대비 증가 → 입 벌렸을 확률 ↑
+    gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
+    variance = gray.var()  # 표정 변화(입 모양 변화)로 variance가 증가함
+
+    return variance > 40   # 경험적 threshold (조절 가능)
 
 
-# Vision API의 likelihood 값을 정량화한 스코어 맵
+# ============================================================
+# 2. Vision API Batch 얼굴 분석 (정확한 감정/웃음 판별)
+# ============================================================
+
 LIKELIHOOD_SCORE = {
-    "UNKNOWN": 0,
-    "VERY_UNLIKELY": 0,
-    "UNLIKELY": 1,
-    "POSSIBLE": 2,
-    "LIKELY": 4,
-    "VERY_LIKELY": 5,
+    "UNKNOWN": 0, "VERY_UNLIKELY": 0, "UNLIKELY": 1,
+    "POSSIBLE": 2, "LIKELY": 4, "VERY_LIKELY": 5
 }
 
-
-# =======================================
-# 1. 웃는 얼굴 썸네일 분석 로직
-# =======================================
-
-def _analyze_frame_for_thumbnail(image_bytes):
+def analyze_batch(frames):
     """
-    한 프레임(이미지)에 대해:
-    - 여러 얼굴이 등장하면 각 얼굴의 점수를 합산하여
-    - '프레임 전체 점수'를 반환
+    Vision API BatchAnnotateImages로 여러 프레임을 한번에 처리
     """
-    image = vision.Image(content=image_bytes)
-    response = vision_client.face_detection(image=image)
-    faces = response.face_annotations
 
-    if not faces:
-        return 0, "얼굴 없음", "N/A"
+    requests = []
+    for f in frames:
+        image = vision.Image(content=f["image_bytes"])
+        requests.append(vision.AnnotateImageRequest(image=image, features=[
+            vision.Feature(type_=vision.Feature.Type.FACE_DETECTION)
+        ]))
 
-    total_score = 0
-    mouth_info_summary = []
+    response = vision_client.batch_annotate_images(requests=requests)
 
-    for face in faces:
-        # -------- 1. 기본 품질 점수 --------
-        base_quality_score = 0
+    results = []
+    for frame, res in zip(frames, response.responses):
+        faces = res.face_annotations
 
-        # 흐림 정도가 심하지 않으면 가산점
-        if LIKELIHOOD_SCORE.get(face.blurred_likelihood, 0) < 3:
-            base_quality_score += 50
-        # 노출 부족이 심하지 않으면 가산점
-        if LIKELIHOOD_SCORE.get(face.under_exposed_likelihood, 0) < 3:
-            base_quality_score += 20
-        # 기울기(roll/pan)가 심하지 않으면 가산점
-        if abs(face.roll_angle) < 20 and abs(face.pan_angle) < 20:
-            base_quality_score += 30
-        # 얼굴 검출 신뢰도가 높은 경우 가산점
-        if face.detection_confidence > 0.7:
-            base_quality_score += 20
+        if not faces:
+            frame["score"] = 0
+            results.append(frame)
+            continue
 
-        # -------- 2. 감정(웃음) 점수 --------
-        api_score_norm = LIKELIHOOD_SCORE.get(face.joy_likelihood, 0) / 5.0
+        total_score = 0
 
-        landmarks = {lm.type_: lm.position for lm in face.landmarks}
-        required_lm = [
-            vision.FaceAnnotation.Landmark.Type.UPPER_LIP,
-            vision.FaceAnnotation.Landmark.Type.LOWER_LIP,
-            vision.FaceAnnotation.Landmark.Type.MOUTH_CENTER,
-            vision.FaceAnnotation.Landmark.Type.MOUTH_LEFT,
-            vision.FaceAnnotation.Landmark.Type.MOUTH_RIGHT,
-        ]
+        for face in faces:
+            base_quality = 0
+            if LIKELIHOOD_SCORE.get(face.blurred_likelihood, 0) < 3: base_quality += 40
+            if LIKELIHOOD_SCORE.get(face.under_exposed_likelihood, 0) < 3: base_quality += 20
+            if abs(face.roll_angle) < 20 and abs(face.pan_angle) < 20: base_quality += 20
 
-        if not all(lm_type in landmarks for lm_type in required_lm):
-            landmark_score_norm = 0.0
-            mouth_info = f"Joy:{api_score_norm * 5:.0f}, Landmark:FAIL"
-        else:
-            # 입 벌어진 정도
-            lip_distance = abs(
-                landmarks[vision.FaceAnnotation.Landmark.Type.UPPER_LIP].y
-                - landmarks[vision.FaceAnnotation.Landmark.Type.LOWER_LIP].y
-            )
+            joy_score = LIKELIHOOD_SCORE.get(face.joy_likelihood, 0) / 5.0 * 300
 
-            # 입꼬리 올라간 정도 (중앙 - 좌/우 높이 차이)
-            center_y = landmarks[vision.FaceAnnotation.Landmark.Type.MOUTH_CENTER].y
-            left_y = landmarks[vision.FaceAnnotation.Landmark.Type.MOUTH_LEFT].y
-            right_y = landmarks[vision.FaceAnnotation.Landmark.Type.MOUTH_RIGHT].y
+            total_score += base_quality + joy_score
 
-            curvature = (center_y - left_y) + (center_y - right_y)
+        frame["score"] = total_score
+        results.append(frame)
 
-            curvature_norm = np.clip(curvature / 15.0, 0, 1)
-            lip_norm = np.clip(lip_distance / 10.0, 0, 1)
-
-            landmark_score_norm = curvature_norm * 0.7 + lip_norm * 0.3
-            mouth_info = (
-                f"Joy:{api_score_norm * 5:.0f}, "
-                f"Pull:{curvature:.2f}, Open:{lip_distance:.2f}"
-            )
-
-        # -------- 3. 감정 종합 점수 --------
-        emotion_norm = api_score_norm * 0.8 + landmark_score_norm * 0.2
-        emotion_score = emotion_norm * 300
-
-        face_score = base_quality_score + emotion_score
-        total_score += face_score
-        mouth_info_summary.append(mouth_info)
-
-    return total_score, "여러 얼굴", "; ".join(mouth_info_summary)
+    return results
 
 
-def _extract_frames_by_interval(video_path, sec_per_frame=0.25):
+# ============================================================
+# 3. 프레임 추출 + 1차 필터링
+# ============================================================
+
+def extract_candidate_frames(video_path, sec_interval=0.25):
     """
-    비디오 파일에서 일정 간격(sec_per_frame)으로 프레임을 추출
+    모든 프레임을 추출하지만,
+    Mediapipe로 ‘웃음 후보’만 반환 (80~95% 제거됨)
     """
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print(f"오류: 비디오 파일을 열 수 없습니다: {video_path}")
-        return []
-
     fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_interval = int(fps * sec_per_frame)
-    if frame_interval == 0:
-        frame_interval = 1
+    step = int(fps * sec_interval)
 
-    frames_data = []
-    frame_count = 0
+    frames = []
+    frame_idx = 0
+    total = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+        total += 1
 
-        if frame_count % frame_interval == 0:
-            ret_enc, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            if ret_enc:
-                current_time_sec = frame_count / fps
-                frames_data.append(
-                    {
-                        "time_sec": current_time_sec,
+        if frame_idx % step == 0:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            if is_smile_candidate(rgb):
+                ok, buffer = cv2.imencode(".jpg", frame)
+                if ok:
+                    frames.append({
+                        "time_sec": frame_idx / fps,
                         "image_bytes": buffer.tobytes(),
                         "image_cv2": frame,
-                    }
-                )
+                    })
 
-        frame_count += 1
+        frame_idx += 1
 
     cap.release()
-    print(f"✅ 총 {len(frames_data)}개의 프레임이 추출되었습니다.")
-    return frames_data
+
+    print(f"⚡ 전체 프레임: {total} → 후보 프레임: {len(frames)}개 (속도 {total/len(frames):.1f}배 향상 예상)")
+    return frames
 
 
-def _process_frame(frame_data):
-    """
-    병렬 처리를 위한 프레임 분석 래퍼
-    """
-    try:
-        score, status, mouth_info_str = _analyze_frame_for_thumbnail(
-            frame_data["image_bytes"]
-        )
-        frame_data["score"] = score
-        frame_data["status"] = status
-        frame_data["mouth"] = mouth_info_str
-        return frame_data
-    except Exception as e:
-        print(f"Frame 처리 중 오류: {e}")
-        return None
-
+# ============================================================
+# 4. 메인: 최종 썸네일 찾기
+# ============================================================
 
 def find_best_thumbnail(video_path):
-    """
-    비디오 파일을 분석하여 가장 좋은 썸네일을 반환하는 함수 (병렬 처리)
-    반환값:
-    {
-        "time_sec": <초 단위 프레임 위치>,
-        "score": <썸네일 점수>,
-        "image_base64": <JPG 이미지의 base64 문자열>
-    }
-    """
-    frames = _extract_frames_by_interval(video_path, sec_per_frame=0.25)
-    if not frames:
+    # --- 1차 필터링 ---
+    candidates = extract_candidate_frames(video_path)
+
+    if len(candidates) == 0:
+        print("😢 웃는 얼굴 후보 없음. 영상 중간 썸네일 반환")
         return None
 
-    print(f"\nGoogle Vision AI 병렬 분석 시작 (총 {len(frames)}개)...\n")
+    # 너무 많으면 30장만 Vision API로 분석
+    if len(candidates) > 30:
+        candidates = candidates[:30]
 
-    scored_frames = []
+    # --- Vision API batch 분석 ---
+    scored = analyze_batch(candidates)
 
-    max_workers = min(10, len(frames))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_process_frame, f) for f in frames]
+    # 최고 점수 프레임 선택
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    best = scored[0]
 
-        for i, future in enumerate(as_completed(futures)):
-            result = future.result()
-            if result:
-                scored_frames.append(result)
+    print(f"🎉 최종 썸네일 결정! (score={best['score']:.1f}, time={best['time_sec']:.2f}s)")
 
-            if i % 10 == 0:
-                print(f"  진행률: {i + 1}/{len(frames)} 프레임 완료")
-
-    if not scored_frames:
-        return None
-
-    scored_frames.sort(key=lambda x: x["score"], reverse=True)
-    best_thumbnail = scored_frames[0]
-
-    # 점수가 0 이하이면, 의미 있는 얼굴이 없다 판단하고 중간 프레임 반환
-    if best_thumbnail["score"] <= 0:
-        print("결과: 🌄 유의미한 얼굴 없음. 50% 지점 프레임 반환")
-        best_thumbnail = frames[len(frames) // 2]
-    else:
-        print(f"결과: 😃 베스트 썸네일 선정! (점수: {int(best_thumbnail['score'])})")
-
-    ret, buffer = cv2.imencode(".jpg", best_thumbnail["image_cv2"])
-    if not ret:
-        return None
-
+    ok, buffer = cv2.imencode(".jpg", best["image_cv2"])
     img_base64 = base64.b64encode(buffer).decode("utf-8")
 
     return {
-        "time_sec": best_thumbnail["time_sec"],
-        "score": best_thumbnail["score"],
+        "time_sec": best["time_sec"],
+        "score": best["score"],
         "image_base64": img_base64,
     }
 
