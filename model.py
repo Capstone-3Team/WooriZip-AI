@@ -247,7 +247,7 @@ def find_best_thumbnail(video_path):
 
 
 # =======================================
-# 2. STT + 요약 + 제목 생성 (Gemini 2.5 Flash)
+# 2. 요약 + 제목 생성 (Gemini 2.5 Flash)
 # =======================================
 
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
@@ -264,8 +264,8 @@ def extract_audio(video_path, audio_path="temp_audio.mp3"):
 
 def analyze_video_content(video_path, api_key):
     """
-    비디오 → 오디오 추출 → Gemini STT + 요약 + 제목 생성
-    transcript / summary / title 반환
+    비디오 → 오디오 추출 → Gemini 요약 + 제목 생성
+    summary / title 반환 (transcript 제거)
     """
     if api_key is None or api_key.strip() == "" or api_key == "YOUR_API_KEY_HERE":
         raise ValueError("유효한 Google API Key가 필요합니다.")
@@ -285,19 +285,17 @@ def analyze_video_content(video_path, api_key):
     # 3. Gemini 모델
     model = genai.GenerativeModel("models/gemini-2.5-flash-preview-09-2025")
 
-    # 4. 프롬프트
+    # 4. 프롬프트 (STT 제거)
     prompt = """
     이 오디오 파일은 가족 일기입니다. 다음 작업을 수행하세요:
 
-    1. [STT]: 오디오의 내용을 한국어 텍스트로 모두 받아쓰기
-    2. [요약]: 중요한 내용만 한 문장으로 요약
-       (대화체 말투 금지 — 사실 기반 요약)
-    3. [제목]: 이 영상의 주요 주제를 반영한 매우 간결한 제목 생성
-       (예: “오늘의 가족 여행”, “아이의 학교 생활 이야기” 같은 형식)
+    1. [요약]: 중요한 내용만 한 문장으로 요약
+       (대화체 금지 — 사실 기반 요약)
+    2. [제목]: 이 영상의 주요 주제를 반영한 아주 간결한 제목 생성
+       (예: “가족 여행”, “학교 이야기” 같은 형식)
 
     반드시 JSON 형태로만 응답:
     {
-      "transcript": "...",
       "summary": "...",
       "title": "..."
     }
@@ -307,11 +305,10 @@ def analyze_video_content(video_path, api_key):
         response = model.generate_content([audio_file, prompt])
         text = response.text.strip()
 
-        # ```json ... ``` 형식으로 오는 경우를 대비해 양쪽 정리
+        # ```json ... ``` 형식으로 오는 경우 대비
         clean_text = text.lstrip("```json").rstrip("```").strip()
         results = json.loads(clean_text)
 
-        transcript = results.get("transcript", "")
         summary = results.get("summary", "")
         title = results.get("title", "")
 
@@ -330,7 +327,6 @@ def analyze_video_content(video_path, api_key):
             pass
 
     return {
-        "transcript": transcript,
         "summary": summary,
         "title": title,
     }
