@@ -274,5 +274,5 @@ def analyze_video_content(video_path, api_key):
 
     return {
         "summary": summary,
-        "title": title,
+        "title": title
     }
