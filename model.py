@@ -208,12 +208,18 @@ def find_best_thumbnail(video_path):
     }
 
 
-# ============================================================
-# 5. 비디오 → 오디오 추출
-# ============================================================
+import os
+import json
+from pydub import AudioSegment
+import google.generativeai as genai
+
+# =======================================
+# 2. 요약 + 제목 생성 (Gemini 2.5 Flash)
+# =======================================
+
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     """
-    비디오 파일에서 오디오를 추출하여 mp3로 저장
+    비디오에서 오디오만 MP3로 추출
     """
     try:
         video = AudioSegment.from_file(video_path)
@@ -223,60 +229,63 @@ def extract_audio(video_path, audio_path="temp_audio.mp3"):
         raise RuntimeError(f"Audio extraction failed: {e}")
 
 
-# ============================================================
-# 6. Gemini 2.5 Flash: 요약 + 제목 생성
-# ============================================================
 def analyze_video_content(video_path, api_key):
     """
-    비디오 → 오디오 추출 → Gemini Flash로 요약 + 제목 생성
-    transcript(전체 STT)는 포함하지 않고 summary/title만 반환
+    비디오 → 오디오 추출 → Gemini로 요약 + 제목 생성
+    (upload_file 제거 / 바이너리 직접 입력)
     """
     if api_key is None or api_key.strip() == "":
         raise ValueError("유효한 Google API Key가 필요합니다.")
 
+    # Gemini API 설정
     genai.configure(api_key=api_key)
 
+    # 1. 오디오 파일 추출
     audio_file_path = extract_audio(video_path)
 
     try:
+        # 2. 오디오 바이너리 직접 읽기
         with open(audio_file_path, "rb") as f:
             audio_bytes = f.read()
 
+        # 3. 빠른 모델
         model = genai.GenerativeModel("models/gemini-2.5-flash")
 
+        # 4. 간결하고 속도 빠른 프롬프트
         prompt = """
-        이 오디오 내용을 한국어로 한 문장으로 요약하고,
+        이 오디오 내용을 한국어로 한 문장 요약하고,
         영상의 주제를 반영한 간결한 제목을 생성하세요.
 
-        반드시 아래 JSON 형식으로만 응답하세요:
+        반드시 JSON:
         {
           "summary": "...",
           "title": "..."
         }
         """
 
+        # 5. 파일 업로드 대신 바이너리 직접 전달
         response = model.generate_content(
-            [
-                {"mime_type": "audio/mpeg", "data": audio_bytes},
+            [ 
+                {"mime_type": "audio/mpeg", "data": audio_bytes}, 
                 prompt
             ]
         )
 
-        text = response.text.strip()
-        clean = text.lstrip("```json").lstrip("```").rstrip("```").strip()
-        data = json.loads(clean)
+        clean_text = response.text.strip().lstrip("```json").rstrip("```").strip()
+        results = json.loads(clean_text)
 
-        summary = data.get("summary", "")
-        title = data.get("title", "")
-
-        return {
-            "summary": summary,
-            "title": title
-        }
+        summary = results.get("summary", "")
+        title = results.get("title", "")
 
     except Exception as e:
         raise RuntimeError(f"Gemini 분석 오류: {e}")
 
     finally:
+        # 임시 오디오 삭제
         if os.path.exists(audio_file_path):
             os.remove(audio_file_path)
+
+    return {
+        "summary": summary,
+        "title": title
+    }
