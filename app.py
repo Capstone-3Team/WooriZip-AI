@@ -1,16 +1,15 @@
-# app.py
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import traceback
 
 import model  # 통합된 model.py
 
 app = Flask(__name__)
 CORS(app)
 
-
 # =======================================
-# 1. 웃는 얼굴 썸네일 API
+# 1. 썸네일 API
 # =======================================
 @app.route("/thumbnail", methods=["POST"])
 def thumbnail():
@@ -24,17 +23,19 @@ def thumbnail():
     try:
         result = model.find_best_thumbnail(temp_path)
         if result is None:
-            return jsonify({"error": "Failed to analyze video (no smiling face)"}), 500
+            return jsonify({"error": "Failed to analyze video"}), 500
 
         return jsonify({
             "message": "Thumbnail analysis successful",
             "time_sec": result["time_sec"],
             "score": int(result["score"]),
-            "image_base64": result["image_base64"],
+            "image_base64": result["image_base64"]
         })
 
     except Exception as e:
-        print(f"썸네일 분석 오류: {e}")
+        print("\n🔥🔥🔥 썸네일 오류 발생 🔥🔥🔥")
+        traceback.print_exc()
+        print("🔥🔥🔥 END 🔥🔥🔥\n")
         return jsonify({"error": str(e)}), 500
 
     finally:
@@ -42,8 +43,9 @@ def thumbnail():
             os.remove(temp_path)
 
 
+
 # =======================================
-# 2. 요약 + 제목 생성 API (STT 전체 텍스트는 없음)
+# 2. STT + 요약 + 제목 생성 API
 # =======================================
 @app.route("/stt", methods=["POST"])
 def stt():
@@ -68,7 +70,9 @@ def stt():
         })
 
     except Exception as e:
-        print(f"분석 오류: {e}")
+        print("\n🔥🔥🔥 STT 오류 발생 🔥🔥🔥")
+        traceback.print_exc()
+        print("🔥🔥🔥 END 🔥🔥🔥\n")
         return jsonify({"error": str(e)}), 500
 
     finally:
@@ -78,5 +82,4 @@ def stt():
 
 
 if __name__ == "__main__":
-    # 배포 환경에서는 debug=False 권장
     app.run(host="0.0.0.0", port=8000, debug=True)
