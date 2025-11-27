@@ -246,13 +246,18 @@ def find_best_thumbnail(video_path):
     }
 
 
+import os
+import json
+from pydub import AudioSegment
+import google.generativeai as genai
+
 # =======================================
 # 2. 요약 + 제목 생성 (Gemini 2.5 Flash)
 # =======================================
 
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     """
-    비디오 파일에서 오디오를 추출하여 mp3로 저장
+    비디오에서 오디오만 MP3로 추출
     """
     try:
         video = AudioSegment.from_file(video_path)
@@ -264,67 +269,59 @@ def extract_audio(video_path, audio_path="temp_audio.mp3"):
 
 def analyze_video_content(video_path, api_key):
     """
-    비디오 → 오디오 추출 → Gemini 요약 + 제목 생성
-    summary / title 반환 (transcript 제거)
+    비디오 → 오디오 추출 → Gemini로 요약 + 제목 생성
+    (upload_file 제거 / 바이너리 직접 입력)
     """
-    if api_key is None or api_key.strip() == "" or api_key == "YOUR_API_KEY_HERE":
+    if api_key is None or api_key.strip() == "":
         raise ValueError("유효한 Google API Key가 필요합니다.")
 
-    # Gemini API 키 설정
+    # Gemini API 설정
     genai.configure(api_key=api_key)
 
-    # 1. 오디오 파일 생성
+    # 1. 오디오 파일 추출
     audio_file_path = extract_audio(video_path)
 
-    # 2. Gemini 파일 업로드
     try:
-        audio_file = genai.upload_file(path=audio_file_path)
-    except Exception as e:
-        raise RuntimeError(f"Gemini audio upload failed: {e}")
+        # 2. 오디오 바이너리 직접 읽기
+        with open(audio_file_path, "rb") as f:
+            audio_bytes = f.read()
 
-    # 3. Gemini 모델
-    model = genai.GenerativeModel("models/gemini-2.5-flash-preview-09-2025")
+        # 3. 빠른 모델
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
 
-    # 4. 프롬프트 (STT 제거)
-    prompt = """
-    이 오디오 파일은 가족 일기입니다. 다음 작업을 수행하세요:
+        # 4. 간결하고 속도 빠른 프롬프트
+        prompt = """
+        이 오디오 내용을 한국어로 한 문장 요약하고,
+        영상의 주제를 반영한 간결한 제목을 생성하세요.
 
-    1. [요약]: 중요한 내용만 한 문장으로 요약
-       (대화체 금지 — 사실 기반 요약)
-    2. [제목]: 이 영상의 주요 주제를 반영한 아주 간결한 제목 생성
-       (예: “가족 여행”, “학교 이야기” 같은 형식)
+        반드시 JSON:
+        {
+          "summary": "...",
+          "title": "..."
+        }
+        """
 
-    반드시 JSON 형태로만 응답:
-    {
-      "summary": "...",
-      "title": "..."
-    }
-    """
+        # 5. 파일 업로드 대신 바이너리 직접 전달
+        response = model.generate_content(
+            [ 
+                {"mime_type": "audio/mpeg", "data": audio_bytes}, 
+                prompt
+            ]
+        )
 
-    try:
-        response = model.generate_content([audio_file, prompt])
-        text = response.text.strip()
-
-        # ```json ... ``` 형식으로 오는 경우 대비
-        clean_text = text.lstrip("```json").rstrip("```").strip()
+        clean_text = response.text.strip().lstrip("```json").rstrip("```").strip()
         results = json.loads(clean_text)
 
         summary = results.get("summary", "")
         title = results.get("title", "")
 
     except Exception as e:
-        raise RuntimeError(f"Gemini 분석 중 오류: {e}")
+        raise RuntimeError(f"Gemini 분석 오류: {e}")
 
     finally:
-        # 로컬 임시 오디오 삭제
+        # 임시 오디오 삭제
         if os.path.exists(audio_file_path):
             os.remove(audio_file_path)
-
-        # Gemini 서버에 업로드된 파일 삭제
-        try:
-            genai.delete_file(audio_file.name)
-        except Exception:
-            pass
 
     return {
         "summary": summary,
