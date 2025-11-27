@@ -1,5 +1,5 @@
 """
-웃는 얼굴 썸네일 + 요약/제목 생성 통합 AI 모듈
+웃는 얼굴 썸네일 + 요약/제목 생성 (초고속 최적화 버전)
 """
 
 import os
@@ -8,6 +8,7 @@ import base64
 import json
 import numpy as np
 from pydub import AudioSegment
+from pydub.effects import speedup
 from google.cloud import vision
 import google.generativeai as genai
 import mediapipe as mp
@@ -23,7 +24,7 @@ vision_client = vision.ImageAnnotatorClient()
 
 # Mediapipe 초기화
 mp_face = mp.solutions.face_detection
-mp_facedetector = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.45)
+mp_facedetector = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.50)
 
 # Likelihood 매핑
 LIKELIHOOD_SCORE = {
@@ -37,7 +38,7 @@ LIKELIHOOD_SCORE = {
 
 
 # ============================================================
-# 1. Mediapipe 1차 필터링
+# 1. Mediapipe 후보 필터링 (강화 버전)
 # ============================================================
 def is_smile_candidate(frame):
     results = mp_facedetector.process(frame)
@@ -57,16 +58,20 @@ def is_smile_candidate(frame):
 
     roi_h = face_roi.shape[0]
     mouth_region = face_roi[int(roi_h * 0.55): int(roi_h * 0.85), :]
-
     if mouth_region.size == 0:
         return False
 
     gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
-    return gray.var() > 40
+    variance = gray.var()
+
+    # ⭐ NEW: percentile 기반 threshold (필터 더 강함)
+    threshold = np.percentile(gray, 75)
+
+    return variance > threshold
 
 
 # ============================================================
-# 2. Vision API Batch 분석 (chunk = 16)
+# 2. Vision API Batch 분석 (16개 단위)
 # ============================================================
 def analyze_batch(frames):
     MAX_BATCH = 16
@@ -87,7 +92,6 @@ def analyze_batch(frames):
 
         for frame, res in zip(chunk, response.responses):
             faces = res.face_annotations
-
             if not faces:
                 frame["score"] = 0
                 all_results.append(frame)
@@ -118,9 +122,9 @@ def analyze_batch(frames):
 
 
 # ============================================================
-# 3. 후보 프레임 추출
+# 3. 빠른 후보 프레임 추출
 # ============================================================
-def extract_candidate_frames(video_path, sec_interval=0.3):
+def extract_candidate_frames(video_path, sec_interval=0.35):
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     step = max(int(fps * sec_interval), 1)
@@ -150,12 +154,12 @@ def extract_candidate_frames(video_path, sec_interval=0.3):
 
     cap.release()
 
-    print(f"⚡ 전체 {total}프레임 중 후보 {len(frames)}개")
+    print(f"⚡ 전체 {total}프레임 → 후보 {len(frames)}개")
     return frames
 
 
 # ============================================================
-# 4. 최종 썸네일
+# 4. 최종 썸네일 선택
 # ============================================================
 def find_best_thumbnail(video_path):
     candidates = extract_candidate_frames(video_path)
@@ -163,9 +167,9 @@ def find_best_thumbnail(video_path):
     if len(candidates) == 0:
         return None
 
-    # 비용 절감: 최대 20장만 Vision에 전달
-    if len(candidates) > 20:
-        candidates = candidates[:20]
+    # 비용절감: 16장까지만 Vision 호출
+    if len(candidates) > 16:
+        candidates = candidates[:16]
 
     scored = analyze_batch(candidates)
     scored.sort(key=lambda x: x["score"], reverse=True)
@@ -184,11 +188,15 @@ def find_best_thumbnail(video_path):
 
 
 # ============================================================
-# 5. 내용 요약 + 제목 생성 (Gemini 2.5 Flash Lite)
+# 5. 요약 + 제목 생성 (Flash Lite + 1.2x 오디오)
 # ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     try:
         audio = AudioSegment.from_file(video_path)
+
+        # ⭐ NEW: 1.2x 속도 증가 (pitch 변화 거의 없음)
+        audio = speedup(audio, playback_speed=1.2, chunk_size=60, crossfade=40)
+
         audio.export(audio_path, format="mp3")
         return audio_path
     except Exception as e:
@@ -201,7 +209,6 @@ def analyze_video_content(video_path, api_key):
 
     genai.configure(api_key=api_key)
 
-    # 오디오 추출
     audio_file_path = extract_audio(video_path)
 
     try:
@@ -227,12 +234,12 @@ def analyze_video_content(video_path, api_key):
             ]
         )
 
-        clean_text = response.text.strip().lstrip("```json").rstrip("```").strip()
-        results = json.loads(clean_text)
+        clean = response.text.strip().lstrip("```json").rstrip("```").strip()
+        result = json.loads(clean)
 
         return {
-            "summary": results.get("summary", ""),
-            "title": results.get("title", "")
+            "summary": result.get("summary", ""),
+            "title": result.get("title", "")
         }
 
     except Exception as e:
