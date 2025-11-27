@@ -208,6 +208,7 @@ def find_best_thumbnail(video_path):
     }
 
 
+
 import os
 import json
 from pydub import AudioSegment
