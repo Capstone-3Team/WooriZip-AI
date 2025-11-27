@@ -8,6 +8,7 @@ import model  # 통합된 model.py
 app = Flask(__name__)
 CORS(app)
 
+
 # =======================================
 # 1. 웃는 얼굴 썸네일 API
 # =======================================
@@ -27,7 +28,7 @@ def thumbnail():
 
         return jsonify({
             "message": "Thumbnail analysis successful",
-            "best_time_sec": result["time_sec"],
+            "time_sec": result["time_sec"],   # ← key 이름 통일
             "score": int(result["score"]),
             "image_base64": result["image_base64"]
         })
@@ -39,6 +40,12 @@ def thumbnail():
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+
+# =======================================
+# 2. STT + 요약 + 제목 생성 API
+# =======================================
 @app.route("/stt", methods=["POST"])
 def stt():
     api_key = os.environ.get("GOOGLE_API_KEY", None)
@@ -58,7 +65,7 @@ def stt():
         return jsonify({
             "message": "success",
             "summary": result["summary"],
-            "title": result["title"]
+            "title": result["title"]      # ← title 반환 추가됨
         })
 
     except Exception as e:
@@ -69,5 +76,6 @@ def stt():
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
 
-if __name__ == "__main__": app.run(host="0.0.0.0", port=8000, debug=True)
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, debug=True)
