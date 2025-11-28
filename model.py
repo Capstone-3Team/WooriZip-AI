@@ -28,6 +28,7 @@ vision_client = vision.ImageAnnotatorClient()
 # ============================================================
 # 1. ffprobe로 회전 정보 읽기
 # ============================================================
+
 def get_rotation(video_path):
     """
     ffprobe로 영상 metadata에서 회전 정보 읽기
@@ -46,17 +47,36 @@ def get_rotation(video_path):
         return 0
 
 
-def correct_rotation(frame, rotation):
+def preprocess_rotation(video_path):
     """
-    회전 metadata에 따라 프레임 회전 보정
+    영상 자체를 ffmpeg로 회전 보정하여 픽셀 단위 회전된 버전 반환
     """
+    rotation = get_rotation(video_path)
+    if rotation == 0:
+        return video_path  # 회전 필요 없음
+
+    rotated_path = f"{video_path}_rotated.mp4"
+
+    # ffmpeg 회전 필터 설정
     if rotation == 90:
-        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        rotate_filter = "transpose=1"
     elif rotation == 180:
-        return cv2.rotate(frame, cv2.ROTATE_180)
+        rotate_filter = "transpose=1,transpose=1"
     elif rotation == 270:
-        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    return frame
+        rotate_filter = "transpose=2"
+    else:
+        return video_path
+
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", rotate_filter,
+        "-c:a", "copy",
+        rotated_path
+    ]
+
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return rotated_path
+
 
 
 # ============================================================
