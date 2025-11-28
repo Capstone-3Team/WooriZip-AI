@@ -20,9 +20,13 @@ def classify():
         if file is None:
             return jsonify({"error": "파일이 필요합니다."}), 400
 
-        temp_path = "temp_upload"
+        # ⭐ 수정 1: 원본 파일명을 포함하여 저장 (확장자 유지)
+        filename = secure_filename(file.filename)
+        temp_path = f"temp_upload_{filename}"
+
         file.save(temp_path)
 
+        # Vision AI 분석
         result = model.classify_media(temp_path, PROJECT_ID)
 
         return jsonify({
@@ -34,8 +38,12 @@ def classify():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # ⭐ 수정 2: finally에서도 안전하게 삭제 처리
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except:
+            pass
 
 
 if __name__ == "__main__":
