@@ -170,7 +170,8 @@ def analyze_batch(frames):
 # 4. 회전 보정 포함 후보 프레임 추출
 # ============================================================
 def extract_candidate_frames(video_path, sec_interval=0.35):
-    rotation = get_rotation(video_path)
+    # 🔥 ffmpeg 회전 보정된 영상 사용
+    video_path = preprocess_rotation(video_path)
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -185,10 +186,8 @@ def extract_candidate_frames(video_path, sec_interval=0.35):
         if not ret:
             break
 
-        # ⭐ 회전 보정
-        frame = correct_rotation(frame, rotation)
-
         total += 1
+
         if frame_idx % step == 0:
             if is_smile_candidate(frame):
                 ok, buffer = cv2.imencode(".jpg", frame)
