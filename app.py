@@ -13,10 +13,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS 설정 (프론트 도메인에 맞춰 수정 가능)
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 나중에 실제 도메인으로 제한하는 게 좋음
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,16 +29,11 @@ app.add_middleware(
 async def health_check():
     return {"status": "ok"}
 
-
 # ==========================
 # 1) 파일 업로드 방식
 # ==========================
 @app.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
-    """
-    Content-Type: multipart/form-data
-    field name: file
-    """
     content = await file.read()
     np_arr = np.frombuffer(content, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -46,24 +41,19 @@ async def analyze_image(file: UploadFile = File(...)):
     if frame is None:
         return {"error": "이미지 디코딩 실패"}
 
-    result = analyze_face_from_frame(frame)
-    return result
-
+    return analyze_face_from_frame(frame)
 
 # ==========================
 # 2) base64 방식
 # ==========================
 @app.post("/analyze_base64")
 async def analyze_base64(data: dict):
-    """
-    Body(JSON): { "image": "<base64-encoded-image>" }
-    """
     if "image" not in data:
         return {"error": "image(base64) 필드 필요"}
 
     try:
         img_bytes = base64.b64decode(data["image"])
-    except Exception:
+    except:
         return {"error": "base64 디코딩 실패"}
 
     np_arr = np.frombuffer(img_bytes, np.uint8)
@@ -72,9 +62,7 @@ async def analyze_base64(data: dict):
     if frame is None:
         return {"error": "이미지 디코딩 실패"}
 
-    result = analyze_face_from_frame(frame)
-    return result
-
+    return analyze_face_from_frame(frame)
 
 # ==========================
 # 로컬 실행용
