@@ -9,31 +9,32 @@ from model import analyze_face_from_frame
 
 app = FastAPI(
     title="Face Guide API",
-    description="웹캠 가이드용 얼굴 위치 분석 서비스",
+    description="얼굴 위치 분석 및 상태 반환 API",
     version="1.0.0"
 )
 
-# CORS
+# CORS 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ==========================
-# 0) 헬스체크
-# ==========================
+# --------------------------------
+# 헬스체크
+# --------------------------------
 @app.get("/health")
-async def health_check():
+def health():
     return {"status": "ok"}
 
-# ==========================
-# 1) 파일 업로드 방식
-# ==========================
+
+# --------------------------------
+# Multipart 이미지 업로드 방식
+# --------------------------------
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze(file: UploadFile = File(...)):
     content = await file.read()
     np_arr = np.frombuffer(content, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -43,9 +44,10 @@ async def analyze_image(file: UploadFile = File(...)):
 
     return analyze_face_from_frame(frame)
 
-# ==========================
-# 2) base64 방식
-# ==========================
+
+# --------------------------------
+# base64 이미지 처리 방식
+# --------------------------------
 @app.post("/analyze_base64")
 async def analyze_base64(data: dict):
     if "image" not in data:
@@ -64,9 +66,13 @@ async def analyze_base64(data: dict):
 
     return analyze_face_from_frame(frame)
 
-# ==========================
-# 로컬 실행용
-# ==========================
+
+# 로컬 실행
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
