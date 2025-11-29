@@ -155,16 +155,22 @@ def compile_pet_shorts(video_path, segments, output_path):
     if not segments:
         raise ValueError("반려동물 클립이 없습니다.")
 
-    selects = []
-    for s, e in segments:
-        selects.append(f"between(t,{s},{e})")
+    # 1) concat용 리스트 파일 생성
+    list_path = "concat_list.txt"
+    with open(list_path, "w") as f:
+        for idx, (start, end) in enumerate(segments):
+            f.write(f"file '{video_path}'\n")
+            f.write(f"inpoint {start}\n")
+            f.write(f"outpoint {end}\n")
 
-    select_str = "+".join(selects)
-
-    filter_complex = (
-        f"[0:v]select='{select_str}',setpts=N/FR/TB[v];"
-        f"[0:a]aselect='{select_str}',asetpts=N/FR/TB[a]"
+    # 2) concat demuxer 실행 (재인코딩 없음, sync 완벽)
+    cmd = (
+        f"ffmpeg -y -f concat -safe 0 -i {list_path} "
+        f"-c:v libx264 -preset veryfast -c:a aac {output_path}"
     )
+
+    os.system(cmd)
+    return output_path
 
     command = (
         f'ffmpeg -i "{video_path}" -filter_complex "{filter_complex}" '
