@@ -119,10 +119,11 @@ def compile_pet():
 
     segments = data["segments"]
     video_path = data["video_path"]
-    output_path = "pet_shorts.mp4"
+    
 
     try:
-        output = compile_pet_shorts(video_path, segments, output_path)
+        output = compile_pet_shorts(video_path, segments)
+
 
         return jsonify({
             "message": "success",
