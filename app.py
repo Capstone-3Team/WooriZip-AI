@@ -2,13 +2,12 @@ import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# 변경된 파일명 반영
+# 모델 import
 from models.thumb_stt import find_best_thumbnail, analyze_video_content
 from models.pet_detect import find_pet_segments, compile_pet_shorts
 
 app = Flask(__name__)
 CORS(app)
-
 
 # ---------------------------------------------------------
 # 1) 썸네일 API
@@ -86,12 +85,12 @@ def detect():
     if "video" not in request.files:
         return jsonify({"error": "No video uploaded"}), 400
 
-    file = request.files["video"]
+    video_file = request.files["video"]
     temp_path = f"temp_pet_{os.getpid()}.mp4"
-    file.save(temp_path)
+    video_file.save(temp_path)
 
     try:
-        PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+        PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or None
         segments = find_pet_segments(temp_path, project_id=PROJECT_ID)
 
         return jsonify({
@@ -112,7 +111,7 @@ def detect():
 # 4) 반려동물 숏츠 생성 API
 # ---------------------------------------------------------
 @app.route("/compile", methods=["POST"])
-def compile():
+def compile_pet():
     data = request.json
 
     if not data or "segments" not in data or "video_path" not in data:
