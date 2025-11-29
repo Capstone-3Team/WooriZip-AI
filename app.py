@@ -1,17 +1,17 @@
-# app.py
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import model   # 통합 model.py
+
+# 변경된 파일명 반영
+from models.thumb_stt import find_best_thumbnail, analyze_video_content
+from models.pet_detect import find_pet_segments, compile_pet_shorts
 
 app = Flask(__name__)
 CORS(app)
 
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-
 
 # ---------------------------------------------------------
-# 1) 썸네일 생성 API
+# 1) 썸네일 API
 # ---------------------------------------------------------
 @app.route("/thumbnail", methods=["POST"])
 def thumbnail():
@@ -23,7 +23,7 @@ def thumbnail():
     video_file.save(temp_path)
 
     try:
-        result = model.find_best_thumbnail(temp_path)
+        result = find_best_thumbnail(temp_path)
 
         if result is None:
             return jsonify({"error": "Failed to detect valid thumbnail"}), 500
@@ -44,7 +44,6 @@ def thumbnail():
             os.remove(temp_path)
 
 
-
 # ---------------------------------------------------------
 # 2) STT + 요약 + 제목 API
 # ---------------------------------------------------------
@@ -62,7 +61,7 @@ def stt():
     video_file.save(temp_path)
 
     try:
-        result = model.analyze_video_content(temp_path, api_key)
+        result = analyze_video_content(temp_path, api_key)
 
         return jsonify({
             "message": "STT + summary + title generation successful",
@@ -79,9 +78,8 @@ def stt():
             os.remove(temp_path)
 
 
-
 # ---------------------------------------------------------
-# 3) 반려동물 등장 구간 탐지
+# 3) 반려동물 출현 구간 탐지 API
 # ---------------------------------------------------------
 @app.route("/detect", methods=["POST"])
 def detect():
@@ -93,11 +91,14 @@ def detect():
     file.save(temp_path)
 
     try:
-        segments = model.find_pet_segments(temp_path, project_id=PROJECT_ID)
+        PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+        segments = find_pet_segments(temp_path, project_id=PROJECT_ID)
+
         return jsonify({
             "message": "success",
             "segments": segments
         })
+
     except Exception as e:
         print(f"[Pet Detect ERROR] {e}")
         return jsonify({"error": str(e)}), 500
@@ -107,9 +108,8 @@ def detect():
             os.remove(temp_path)
 
 
-
 # ---------------------------------------------------------
-# 4) 반려동물 숏츠 생성(FFmpeg)
+# 4) 반려동물 숏츠 생성 API
 # ---------------------------------------------------------
 @app.route("/compile", methods=["POST"])
 def compile():
@@ -123,15 +123,16 @@ def compile():
     output_path = "pet_shorts.mp4"
 
     try:
-        result = model.compile_pet_shorts(video_path, segments, output_path)
+        output = compile_pet_shorts(video_path, segments, output_path)
+
         return jsonify({
             "message": "success",
-            "output": result
+            "output": output
         })
+
     except Exception as e:
         print(f"[Pet Compile ERROR] {e}")
         return jsonify({"error": str(e)}), 500
-
 
 
 # ---------------------------------------------------------
