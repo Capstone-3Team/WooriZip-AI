@@ -151,26 +151,48 @@ def find_pet_segments(video_path, project_id=None):
 # -------------------------------
 # 4. FFmpeg로 클립 이어붙이기 (동일)
 # -------------------------------
-def compile_pet_shorts(video_path, segments, output_path):
+import uuid
+import os
+
+def compile_pet_shorts(video_path, segments, output_path=None):
     if not segments:
         raise ValueError("반려동물 클립이 없습니다.")
 
-    # 1) concat용 리스트 파일 생성
-    list_path = "concat_list.txt"
+    # ===============================
+    # 1) output_path 자동 생성 (UUID)
+    # ===============================
+    if output_path is None:
+        os.makedirs("shorts/generated", exist_ok=True)
+
+        # 👉 여기서 UUID 생성
+        short_id = uuid.uuid4().hex[:12]
+        output_path = f"shorts/generated/pet_shorts_{short_id}.mp4"
+
+    # ===============================
+    # 2) FFmpeg concat list 생성
+    # ===============================
+    list_path = f"{output_path}.txt"
+
     with open(list_path, "w") as f:
-        for idx, (start, end) in enumerate(segments):
+        for start, end in segments:
             f.write(f"file '{video_path}'\n")
             f.write(f"inpoint {start}\n")
             f.write(f"outpoint {end}\n")
 
-    # 2) concat demuxer 실행 (재인코딩 없음, sync 완벽)
+    # ===============================
+    # 3) FFmpeg 실행
+    # ===============================
     cmd = (
         f"ffmpeg -y -f concat -safe 0 -i {list_path} "
         f"-c:v libx264 -preset veryfast -c:a aac {output_path}"
     )
-
     os.system(cmd)
+
+    # 리스트 파일 삭제
+    os.remove(list_path)
+
     return output_path
+
 
     command = (
         f'ffmpeg -i "{video_path}" -filter_complex "{filter_complex}" '
