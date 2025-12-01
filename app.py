@@ -98,15 +98,27 @@ def stt_api():
     if not api_key:
         return jsonify({"error": "Missing API Key"}), 400
 
+    file = request.files["video"]
+    filename = file.filename or "upload.webm"
+
+    # 🔥 업로드된 파일 확장자 그대로 사용 (webm/mp4 등)
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+    else:
+        # 확장자 없으면 webm으로 가정 (MediaRecorder 기본)
+        ext = "webm"
+
     task_id = uuid4().hex
-    temp_path = f"temp_{task_id}.mp4"
-    request.files["video"].save(temp_path)
+    temp_path = f"temp_{task_id}.{ext}"
+    file.save(temp_path)
 
-    stt_q.put({"id": task_id, "path": temp_path, "api_key": api_key})
-    result = stt_res_q.get()
-
-    os.remove(temp_path)
-    return jsonify(result)
+    try:
+        stt_q.put({"id": task_id, "path": temp_path, "api_key": api_key})
+        result = stt_res_q.get()
+        return jsonify(result)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 # ============================================================
