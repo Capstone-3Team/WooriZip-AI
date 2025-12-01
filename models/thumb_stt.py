@@ -1,6 +1,6 @@
 """
 웃는 얼굴 썸네일 + 요약/제목 생성
-FaceMesh + Flash Lite (최적화 버전)
+FaceMesh + Flash (최적화 버전)
 """
 
 import os
@@ -8,14 +8,11 @@ import cv2
 import base64
 import json
 import numpy as np
-import subprocess
 from pydub import AudioSegment
 from pydub.effects import speedup
-from pydub.silence import detect_nonsilent
 from google.cloud import vision
 import google.generativeai as genai
 import mediapipe as mp
-
 
 # ============================================================
 # 0. Vision API 초기화
@@ -27,29 +24,19 @@ vision_client = vision.ImageAnnotatorClient()
 
 
 # ============================================================
-# (NEW) 1. 무음 구간 제거
+# (OPTIONAL) — 무음 제거 함수 (더 이상 사용하지 않음)
 # ============================================================
 def remove_silence(audio: AudioSegment,
-                   min_silence_len=800,     # 0.8초 이상 무음이면 skip
-                   silence_thresh=-45):     # -45dB 아래는 사람 말 아님
+                   min_silence_len=800,
+                   silence_thresh=-45):
     """
-    오디오에서 '말하는 부분만' 이어붙여 반환.
+    (지금은 사용 안 함)
     """
-    nonsilent = detect_nonsilent(
-        audio,
-        min_silence_len=min_silence_len,
-        silence_thresh=silence_thresh
-    )
-
-    if not nonsilent:
-        return audio  # 전체가 무음이면 그대로 사용
-
-    chunks = [audio[start:end] for start, end in nonsilent]
-    return sum(chunks)
+    return audio
 
 
 # ============================================================
-# 2. FaceMesh 기반 웃는 얼굴 후보 검출
+# 1. FaceMesh 기반 웃는 얼굴 후보 검출
 # ============================================================
 mp_face_mesh = mp.solutions.face_mesh
 mesh_detector = mp_face_mesh.FaceMesh(
@@ -93,7 +80,7 @@ def is_smile_candidate(frame):
 
 
 # ============================================================
-# 3. Vision API Batch 분석 (웃는 얼굴 스코어)
+# 2. Vision API Batch 분석
 # ============================================================
 LIKELIHOOD_SCORE = {
     "UNKNOWN": 0,
@@ -152,7 +139,7 @@ def analyze_batch(frames):
 
 
 # ============================================================
-# 4. 웃는 얼굴 프레임 추출
+# 3. 웃는 얼굴 후보 프레임 추출
 # ============================================================
 def extract_candidate_frames(video_path, sec_interval=0.35):
     cap = cv2.VideoCapture(video_path)
@@ -167,7 +154,6 @@ def extract_candidate_frames(video_path, sec_interval=0.35):
         ret, frame = cap.read()
         if not ret:
             break
-
         total += 1
 
         if frame_idx % step == 0:
@@ -188,7 +174,7 @@ def extract_candidate_frames(video_path, sec_interval=0.35):
 
 
 # ============================================================
-# 5. 최종 썸네일 선택
+# 4. 최종 썸네일 선택
 # ============================================================
 def find_best_thumbnail(video_path):
     candidates = extract_candidate_frames(video_path)
@@ -201,8 +187,8 @@ def find_best_thumbnail(video_path):
 
     scored = analyze_batch(candidates)
     scored.sort(key=lambda x: x["score"], reverse=True)
-    best = scored[0]
 
+    best = scored[0]
     ok, buffer = cv2.imencode(".jpg", best["image_cv2"])
     img_base64 = base64.b64encode(buffer).decode("utf-8")
 
@@ -216,21 +202,19 @@ def find_best_thumbnail(video_path):
 
 
 # ============================================================
-# 6. 오디오 → 무음제거 → 1.2x 속도 → Gemini
+# 5. 오디오 추출 → 1.2x → Gemini (무음 제거 없음)
 # ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     try:
         audio = AudioSegment.from_file(video_path)
 
-        # 🔥 무음 제거 추가
-        audio = remove_silence(audio)
+        # ❌ 무음 제거 제거됨
+        # audio = remove_silence(audio)
 
-        # 🔥 1.2x 속도 증가
+        # 🔥 1.2x 속도 증가 (원한다면 이것도 끌 수 있음)
         audio = speedup(audio, playback_speed=1.2, chunk_size=60, crossfade=40)
 
-        # 🔥 mp3 저장
         audio.export(audio_path, format="mp3")
-
         return audio_path
 
     except Exception as e:
