@@ -252,14 +252,22 @@ def find_best_thumbnail(video_path):
 # ============================================================
 # 5. 오디오 추출 → 1.2x → Gemini (무음 제거 없음)
 # ============================================================
-def extract_audio(video_path, audio_path="temp_audio.mp3"):
+# ============================================================
+# 5. 오디오 추출 → 1.2x → Gemini (무음 제거 없음)
+# ============================================================
+from pydub import AudioSegment
+from pydub.effects import speedup
+
+def extract_audio(video_path, audio_path=None):
     try:
-        # 확장자 기반 포맷 자동 지정 (webm ↔ mp4 문제 해결)
-        ext = video_path.split(".")[-1].lower()
+        # 🔥 audio_path를 명시하지 않으면, 원본 경로 기반으로 자동 부여
+        if audio_path is None:
+            audio_path = f"{video_path}.audio.mp3"
 
-        audio = AudioSegment.from_file(video_path, format=ext)
+        # 🔥 format 인자 제거 → ffmpeg가 컨테이너(webm/mp4) 자동 인식
+        audio = AudioSegment.from_file(video_path)
 
-        # 필요하다면 → 무음 제거 제거 가능
+        # 필요하면 무음 제거 다시 붙일 수 있음
         # audio = remove_silence(audio)
 
         # 1.2x 속도 증가
