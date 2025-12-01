@@ -126,6 +126,8 @@ def detect():
 # =========================================================
 # 4) 반려동물 숏츠 생성 API
 # =========================================================
+from utils.s3_upload import upload_to_s3
+
 @app.route("/compile", methods=["POST"])
 def compile_pet():
     data = request.json
@@ -137,46 +139,24 @@ def compile_pet():
     video_path = data["video_path"]
 
     try:
-        output = compile_pet_shorts(video_path, segments)
+        # 1) 로컬 숏츠 생성
+        output_path = compile_pet_shorts(video_path, segments)
+
+        # 2) 생성된 숏츠 S3 업로드
+        s3_url = upload_to_s3(output_path, "pet-shorts")
+
+        # 3) 로컬 파일 삭제
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
         return jsonify({
             "message": "success",
-            "output": output
+            "shortsUrl": s3_url
         })
 
     except Exception as e:
         print("[Pet Compile ERROR]", e)
         return jsonify({"error": str(e)}), 500
-
-
-
-# =========================================================
-# 5) 반려동물 사진/영상 단순 분류 API
-# =========================================================
-@app.route("/classify", methods=["POST"])
-def classify_daily():
-    try:
-        file = request.files.get("file")
-        if file is None:
-            return jsonify({"error": "file is required"}), 400
-
-        filename = file.filename
-        temp_path = f"temp_daily_{filename}"
-        file.save(temp_path)
-
-        PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or None
-        result = classify_media(temp_path, PROJECT_ID)
-
-        return jsonify({"message": "success", "data": result})
-
-    except Exception as e:
-        print("[Pet Daily ERROR]", e)
-        return jsonify({"error": str(e)}), 500
-
-    finally:
-        if "temp_path" in locals() and os.path.exists(temp_path):
-            os.remove(temp_path)
-
 
 
 # =========================================================
