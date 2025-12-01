@@ -7,57 +7,65 @@ from multiprocessing import Process, Queue
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# -----------------------
 # 모델 import
-# -----------------------
 from models.thumb_stt import find_best_thumbnail, analyze_video_content
 from models.face_arrange import analyze_face_from_frame
+from models.pet_daily import classify_media
+from models.pet_detect import find_pet_segments, compile_pet_shorts
 
-# -----------------------
-# Worker Queues
-# -----------------------
+# Worker queues
 stt_q = Queue()
 stt_res_q = Queue()
-
 pet_q = Queue()
 pet_res_q = Queue()
 
 app = Flask(__name__)
 CORS(app)
 
+# ============================================================
+# 1) 얼굴 정렬 (실시간) - Worker NO
+# ============================================================
+@app.route("/face_arrange", methods=["POST"])
+def face_arrange_api():
+    if "file" in request.files:
+        img_bytes = request.files["file"].read()
+    else:
+        data = request.get_json()
+        img_bytes = base64.b64decode(data["image"])
 
-# =========================================================
-# 1) 썸네일 추출 (Worker 사용 X)
-# =========================================================
+    frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({"error": "image decode failed"}), 400
+
+    result = analyze_face_from_frame(frame)
+    return jsonify({"message": "success", "data": result})
+
+
+# ============================================================
+# 2) 썸네일 추출 (빠름 → Worker NO)
+# ============================================================
 @app.route("/thumbnail", methods=["POST"])
 def thumbnail_api():
     if "video" not in request.files:
         return jsonify({"error": "No video provided"}), 400
 
-    task_id = uuid4().hex
-    temp_path = f"temp_{task_id}.mp4"
+    temp_path = f"temp_{uuid4().hex}.mp4"
     request.files["video"].save(temp_path)
 
     try:
         result = find_best_thumbnail(temp_path)
-        if result is None:
-            return jsonify({"error": "No valid thumbnail found"}), 500
-
-        return jsonify({
-            "message": "success",
-            **result
-        })
-
+        os.remove(temp_path)
+        if not result:
+            return jsonify({"error": "No valid thumbnail"}), 500
+        return jsonify(result)
     except Exception as e:
+        os.remove(temp_path)
         return jsonify({"error": str(e)}), 500
 
-    finally:
-        os.remove(temp_path)
 
-
-# =========================================================
-# 2) STT (요약 + 제목 생성) → Worker로 전달
-# =========================================================
+# ============================================================
+# 3) STT + 요약 + 제목 생성 → Worker
+# ============================================================
 @app.route("/stt", methods=["POST"])
 def stt_api():
     if "video" not in request.files:
@@ -78,28 +86,9 @@ def stt_api():
     return jsonify(result)
 
 
-# =========================================================
-# 3) Pet Shorts (구간 탐지) → Pet Worker
-# =========================================================
-@app.route("/detect", methods=["POST"])
-def detect_api():
-    if "video" not in request.files:
-        return jsonify({"error": "No video provided"}), 400
-
-    task_id = uuid4().hex
-    temp_path = f"temp_{task_id}.mp4"
-    request.files["video"].save(temp_path)
-
-    pet_q.put({"id": task_id, "path": temp_path, "mode": "shorts"})
-    result = pet_res_q.get()
-
-    os.remove(temp_path)
-    return jsonify(result)
-
-
-# =========================================================
-# 4) Pet Daily (사진/영상 분류) → Pet Worker
-# =========================================================
+# ============================================================
+# 4) 반려동물 DAILY → Worker
+# ============================================================
 @app.route("/pet_daily", methods=["POST"])
 def pet_daily_api():
     if "file" not in request.files:
@@ -107,49 +96,37 @@ def pet_daily_api():
 
     file = request.files["file"]
     ext = file.filename.split(".")[-1]
-    task_id = uuid4().hex
-    temp_path = f"temp_{task_id}.{ext}"
+    temp_path = f"temp_{uuid4().hex}.{ext}"
     file.save(temp_path)
 
-    pet_q.put({"id": task_id, "path": temp_path, "mode": "daily"})
+    pet_q.put({"mode": "daily", "path": temp_path})
     result = pet_res_q.get()
 
     os.remove(temp_path)
     return jsonify(result)
 
 
-# =========================================================
-# 5) 얼굴 정렬 → app.py에서 직접 처리
-# =========================================================
-@app.route("/face_arrange", methods=["POST"])
-def face_arrange_api():
-    if "file" in request.files:
-        img_bytes = request.files["file"].read()
-    else:
-        data = request.get_json()
-        if not data or "image" not in data:
-            return jsonify({"error": "image(base64) or file required"}), 400
-        try:
-            img_bytes = base64.b64decode(data["image"])
-        except:
-            return jsonify({"error": "base64 decode failed"}), 400
+# ============================================================
+# 5) 반려동물 숏츠 → Worker
+# ============================================================
+@app.route("/detect", methods=["POST"])
+def detect_api():
+    if "video" not in request.files:
+        return jsonify({"error": "No video provided"}), 400
 
-    np_arr = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    temp_path = f"temp_{uuid4().hex}.mp4"
+    request.files["video"].save(temp_path)
 
-    if frame is None:
-        return jsonify({"error": "image decode failed"}), 400
+    pet_q.put({"mode": "shorts", "path": temp_path})
+    result = pet_res_q.get()
 
-    try:
-        result = analyze_face_from_frame(frame)
-        return jsonify({"message": "success", "data": result})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    os.remove(temp_path)
+    return jsonify(result)
 
 
-# =========================================================
-# Worker 시작 함수
-# =========================================================
+# ============================================================
+# Worker start
+# ============================================================
 def start_workers():
     from workers.stt_worker import run_stt_worker
     from workers.pet_worker import run_pet_worker
@@ -158,9 +135,6 @@ def start_workers():
     Process(target=run_pet_worker, args=(pet_q, pet_res_q)).start()
 
 
-# =========================================================
-# Run Server
-# =========================================================
 if __name__ == "__main__":
     start_workers()
     app.run(host="0.0.0.0", port=8000)
