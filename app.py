@@ -6,18 +6,21 @@ import cv2
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+# -------------------------------
 # 모델 import
+# -------------------------------
 from models.thumb_stt import find_best_thumbnail, analyze_video_content
-from models.pet_detect import find_pet_segments, compile_pet_shorts
-from models.face_arrange import analyze_face_from_frame  # 🔥 FastAPI 기능 Flask로 통합
+from models.pet_shorts import find_pet_segments, compile_pet_shorts
+from models.pet_daily import classify_media
+from models.face_arrange import analyze_face_from_frame    # ← ⭐ NEW 추가됨
 
 app = Flask(__name__)
 CORS(app)
 
 
-# ---------------------------------------------------------
+# =========================================================
 # 1) 썸네일 API
-# ---------------------------------------------------------
+# =========================================================
 @app.route("/thumbnail", methods=["POST"])
 def thumbnail():
     if "video" not in request.files:
@@ -29,6 +32,7 @@ def thumbnail():
 
     try:
         result = find_best_thumbnail(temp_path)
+
         if result is None:
             return jsonify({"error": "Failed to detect valid thumbnail"}), 500
 
@@ -40,7 +44,7 @@ def thumbnail():
         })
 
     except Exception as e:
-        print(f"[Thumbnail ERROR] {e}")
+        print("[Thumbnail ERROR]", e)
         return jsonify({"error": str(e)}), 500
 
     finally:
@@ -49,9 +53,9 @@ def thumbnail():
 
 
 
-# ---------------------------------------------------------
-# 2) 요약 + 제목 API
-# ---------------------------------------------------------
+# =========================================================
+# 2) STT + 요약 + 제목 API
+# =========================================================
 @app.route("/stt", methods=["POST"])
 def stt():
     if "video" not in request.files:
@@ -67,14 +71,15 @@ def stt():
 
     try:
         result = analyze_video_content(temp_path, api_key)
+
         return jsonify({
-            "message": "summary + title generation successful",
+            "message": "STT + summary + title generation successful",
             "summary": result["summary"],
             "title": result["title"]
         })
 
     except Exception as e:
-        print(f"[STT ERROR] {e}")
+        print("[STT ERROR]", e)
         return jsonify({"error": str(e)}), 500
 
     finally:
@@ -83,9 +88,9 @@ def stt():
 
 
 
-# ---------------------------------------------------------
+# =========================================================
 # 3) 반려동물 출현 구간 탐지 API
-# ---------------------------------------------------------
+# =========================================================
 @app.route("/detect", methods=["POST"])
 def detect():
     if "video" not in request.files:
@@ -99,10 +104,13 @@ def detect():
         PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or None
         segments = find_pet_segments(temp_path, project_id=PROJECT_ID)
 
-        return jsonify({"message": "success", "segments": segments})
+        return jsonify({
+            "message": "success",
+            "segments": segments
+        })
 
     except Exception as e:
-        print(f"[Pet Detect ERROR] {e}")
+        print("[Pet Detect ERROR]", e)
         return jsonify({"error": str(e)}), 500
 
     finally:
@@ -111,9 +119,9 @@ def detect():
 
 
 
-# ---------------------------------------------------------
+# =========================================================
 # 4) 반려동물 숏츠 생성 API
-# ---------------------------------------------------------
+# =========================================================
 @app.route("/compile", methods=["POST"])
 def compile_pet():
     data = request.json
@@ -126,30 +134,62 @@ def compile_pet():
 
     try:
         output = compile_pet_shorts(video_path, segments)
-        return jsonify({"message": "success", "output": output})
+
+        return jsonify({
+            "message": "success",
+            "output": output
+        })
 
     except Exception as e:
-        print(f"[Pet Compile ERROR] {e}")
+        print("[Pet Compile ERROR]", e)
         return jsonify({"error": str(e)}), 500
 
 
 
-# ---------------------------------------------------------
-# 5) 얼굴 위치 분석 API (FastAPI → Flask 버전)
-# ---------------------------------------------------------
+# =========================================================
+# 5) 반려동물 사진/영상 단순 분류 API
+# =========================================================
+@app.route("/classify", methods=["POST"])
+def classify_daily():
+    try:
+        file = request.files.get("file")
+        if file is None:
+            return jsonify({"error": "file is required"}), 400
+
+        filename = file.filename
+        temp_path = f"temp_daily_{filename}"
+        file.save(temp_path)
+
+        PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or None
+        result = classify_media(temp_path, PROJECT_ID)
+
+        return jsonify({"message": "success", "data": result})
+
+    except Exception as e:
+        print("[Pet Daily ERROR]", e)
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if "temp_path" in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+
+# =========================================================
+# 6) 🎯 얼굴 위치 분석 API (FastAPI → Flask 변환)
+# =========================================================
 @app.route("/face_arrange", methods=["POST"])
 def face_arrange():
     """
-    FastAPI의 /analyze + /analyze_base64 기능을 Flask로 통합 구현
-    Multipart 또는 base64 둘 다 지원
+    이미지 업로드(file) 또는 base64(JSON) 둘 다 지원
     """
-    # 1) Multipart 이미지 파일 방식
-    if "file" in request.files:
-        file = request.files["file"]
-        img_bytes = file.read()
 
-    # 2) base64 JSON 방식
+    # 1) Multipart 이미지 파일
+    if "file" in request.files:
+        img_bytes = request.files["file"].read()
+
     else:
+        # 2) base64 JSON 전달 방식
         data = request.get_json()
         if not data or "image" not in data:
             return jsonify({"error": "image(base64) or file required"}), 400
@@ -159,25 +199,25 @@ def face_arrange():
         except:
             return jsonify({"error": "base64 decode failed"}), 400
 
-    # OpenCV 디코딩
+    # OpenCV로 디코딩
     np_arr = np.frombuffer(img_bytes, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
     if frame is None:
         return jsonify({"error": "image decode failed"}), 400
 
-    # 분석 실행
     try:
         result = analyze_face_from_frame(frame)
         return jsonify({"message": "success", "data": result})
 
     except Exception as e:
+        print("[Face Arrange ERROR]", e)
         return jsonify({"error": str(e)}), 500
 
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Run server
-# ---------------------------------------------------------
+# =========================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)
