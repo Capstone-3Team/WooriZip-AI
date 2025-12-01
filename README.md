@@ -1,4 +1,3 @@
-# WooriZip-AI
 # 🧠 WooriZip AI Server  
 AI 기능 4종을 통합한 Flask 기반 백엔드 서버입니다.
 
