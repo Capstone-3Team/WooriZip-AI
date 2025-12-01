@@ -206,12 +206,15 @@ def find_best_thumbnail(video_path):
 # ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     try:
-        audio = AudioSegment.from_file(video_path)
+        # 확장자 기반 포맷 자동 지정 (webm ↔ mp4 문제 해결)
+        ext = video_path.split(".")[-1].lower()
 
-        # ❌ 무음 제거 제거됨
+        audio = AudioSegment.from_file(video_path, format=ext)
+
+        # 필요하다면 → 무음 제거 제거 가능
         # audio = remove_silence(audio)
 
-        # 🔥 1.2x 속도 증가 (원한다면 이것도 끌 수 있음)
+        # 1.2x 속도 증가
         audio = speedup(audio, playback_speed=1.2, chunk_size=60, crossfade=40)
 
         audio.export(audio_path, format="mp3")
