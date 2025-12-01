@@ -28,18 +28,40 @@ CORS(app)
 @app.route("/face_arrange", methods=["POST"])
 
 def face_arrange_api():
+    # ---------------------------
+    # 1) 이미지 읽기
+    # ---------------------------
     if "file" in request.files:
         img_bytes = request.files["file"].read()
     else:
         data = request.get_json()
-        img_bytes = base64.b64decode(data["image"])
+        if not data or "image" not in data:
+            return jsonify({"error": "image(base64) or file required"}), 400
+        try:
+            img_bytes = base64.b64decode(data["image"])
+        except:
+            return jsonify({"error": "base64 decode failed"}), 400
 
-    frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+    np_arr = np.frombuffer(img_bytes, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
     if frame is None:
         return jsonify({"error": "image decode failed"}), 400
 
-    result = analyze_face_from_frame(frame)
-    return jsonify({"message": "success", "data": result})
+    # ---------------------------
+    # 2) 얼굴 분석 수행
+    # ---------------------------
+    try:
+        result = analyze_face_from_frame(frame)
+
+        # 방법 A 적용 → data 래핑 없이 그대로 반환!
+        # 예:
+        # { "state": "move_back", "message": "...", "is_good": False }
+        return jsonify(result)
+
+    except Exception as e:
+        print("[Face Arrange ERROR]", e)
+        return jsonify({"error": str(e)}), 500
 
 
 # ============================================================
