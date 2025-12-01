@@ -11,7 +11,7 @@ from flask_cors import CORS
 from models.thumb_stt import find_best_thumbnail, analyze_video_content
 from models.face_arrange import analyze_face_from_frame
 from models.pet_daily import classify_media
-from models.pet_detect import find_pet_segments, compile_pet_shorts
+from models.pet_shorts import find_pet_segments, compile_pet_shorts
 
 # Worker queues
 stt_q = Queue()
