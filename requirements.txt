@@ -1,27 +1,18 @@
-# --- Flask 서버 ---
 Flask==3.0.2
 flask-cors==4.0.0
 
-# --- Google Cloud AI ---
 google-cloud-vision==3.4.5
-google-cloud-core==2.3.3
 google-api-core==2.17.1
+google-cloud-core==2.3.3
 google-generativeai==0.3.2
 
-# --- Mediapipe (FaceMesh) ---
 mediapipe==0.10.9
-
-# --- OpenCV ---
 opencv-python==4.9.0.80
 
-# --- Audio 처리 (STT 전처리) ---
 pydub==0.25.1
-
-# --- 병렬 처리 & 기타 ---
 numpy==1.26.4
-
-# --- FFmpeg 파이썬 래퍼 (ffmpeg 명령어 호출용, OS에 ffmpeg 설치 필요) ---
 ffmpeg-python==0.2.0
-
-# --- 영상/이미지 관련 ---
 Pillow==10.3.0
+
+boto3==1.34.34
+requests==2.31.0
