@@ -1,214 +1,117 @@
 import os
-import base64
-import numpy as np
-import cv2
+from uuid import uuid4
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from multiprocessing import Process, Queue
 
-# -------------------------------
-# 모델 import
-# -------------------------------
-from models.thumb_stt import find_best_thumbnail, analyze_video_content
-from models.pet_shorts import find_pet_segments, compile_pet_shorts
-from models.pet_daily import classify_media
-from models.face_arrange import analyze_face_from_frame
-from utils.s3_upload import upload_to_s3
+# Worker Queues
+thumbnail_q = Queue()
+thumbnail_res_q = Queue()
+
+stt_q = Queue()
+stt_res_q = Queue()
+
+pet_q = Queue()
+pet_res_q = Queue()
 
 app = Flask(__name__)
 CORS(app)
 
-# =========================================================
-# 1) 썸네일 추출 API
-# =========================================================
+# ------------------------------------------------------
+# 1) Thumbnail API → Thumbnail Worker로 전달
+# ------------------------------------------------------
 @app.route("/thumbnail", methods=["POST"])
-def thumbnail():
+def thumbnail_api():
     if "video" not in request.files:
-        return jsonify({"error": "No video file provided"}), 400
+        return jsonify({"error": "No video provided"}), 400
 
-    video_file = request.files["video"]
-    temp_path = f"temp_thumbnail_{os.getpid()}.mp4"
-    video_file.save(temp_path)
+    task_id = uuid4().hex
+    temp_path = f"temp_{task_id}.mp4"
+    request.files["video"].save(temp_path)
 
-    try:
-        result = find_best_thumbnail(temp_path)
+    thumbnail_q.put({"id": task_id, "path": temp_path})
+    result = thumbnail_res_q.get()
 
-        if result is None:
-            return jsonify({"error": "Failed to detect valid thumbnail"}), 500
-
-        return jsonify({
-            "message": "Thumbnail analysis successful",
-            "time_sec": result["time_sec"],
-            "score": result["score"],
-            "image_base64": result["image_base64"]
-        })
-
-    except Exception as e:
-        print("[Thumbnail ERROR]", e)
-        return jsonify({"error": str(e)}), 500
-
-    finally:
-        os.remove(temp_path) if os.path.exists(temp_path) else None
+    os.remove(temp_path)
+    return jsonify(result)
 
 
-# =========================================================
-# 2) STT + 요약 + 제목 생성 API
-# =========================================================
+# ------------------------------------------------------
+# 2) STT(API) → STT Worker로 전달
+# ------------------------------------------------------
 @app.route("/stt", methods=["POST"])
-def stt():
+def stt_api():
     if "video" not in request.files:
-        return jsonify({"error": "No video file provided"}), 400
+        return jsonify({"error": "No video provided"}), 400
 
     api_key = request.form.get("api_key", "")
     if not api_key:
         return jsonify({"error": "Missing API Key"}), 400
 
-    video_file = request.files["video"]
-    temp_path = f"temp_stt_{os.getpid()}.mp4"
-    video_file.save(temp_path)
+    task_id = uuid4().hex
+    temp_path = f"temp_{task_id}.mp4"
+    request.files["video"].save(temp_path)
 
-    try:
-        result = analyze_video_content(temp_path, api_key)
+    stt_q.put({"id": task_id, "path": temp_path, "api_key": api_key})
+    result = stt_res_q.get()
 
-        return jsonify({
-            "message": "summary + title generation successful",
-            "summary": result["summary"],
-            "title": result["title"]
-        })
-
-    except Exception as e:
-        print("[STT ERROR]", e)
-        return jsonify({"error": str(e)}), 500
-
-    finally:
-        os.remove(temp_path) if os.path.exists(temp_path) else None
+    os.remove(temp_path)
+    return jsonify(result)
 
 
-# =========================================================
-# 3) 반려동물 출현 구간 탐지 API
-# =========================================================
+# ------------------------------------------------------
+# 3) Pet 구간 (shorts) 탐지
+# ------------------------------------------------------
 @app.route("/detect", methods=["POST"])
-def detect():
+def detect_api():
     if "video" not in request.files:
-        return jsonify({"error": "No video uploaded"}), 400
+        return jsonify({"error": "No video provided"}), 400
 
-    video_file = request.files["video"]
-    temp_path = f"temp_pet_{os.getpid()}.mp4"
-    video_file.save(temp_path)
+    task_id = uuid4().hex
+    temp_path = f"temp_{task_id}.mp4"
+    request.files["video"].save(temp_path)
 
-    try:
-        PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-        segments = find_pet_segments(temp_path, project_id=PROJECT_ID)
+    pet_q.put({"id": task_id, "path": temp_path, "mode": "shorts"})
+    result = pet_res_q.get()
 
-        return jsonify({
-            "message": "success",
-            "segments": segments
-        })
-
-    except Exception as e:
-        print("[Pet Detect ERROR]", e)
-        return jsonify({"error": str(e)}), 500
-
-    finally:
-        os.remove(temp_path) if os.path.exists(temp_path) else None
+    os.remove(temp_path)
+    return jsonify(result)
 
 
-# =========================================================
-# 4) 반려동물 숏츠 생성 API (compile → shorts)
-# =========================================================
-@app.route("/shorts", methods=["POST"])
-def shorts():
-    data = request.json
-
-    if not data or "segments" not in data or "video_path" not in data:
-        return jsonify({"error": "video_path + segments required"}), 400
-
-    segments = data["segments"]
-    video_path = data["video_path"]
-
-    try:
-        # 1) 로컬 숏츠 생성
-        output_path = compile_pet_shorts(video_path, segments)
-
-        # 2) S3 업로드
-        s3_url = upload_to_s3(output_path, "pet-shorts")
-
-        # 3) 로컬 파일 삭제
-        os.remove(output_path)
-
-        return jsonify({
-            "message": "success",
-            "shortsUrl": s3_url
-        })
-
-    except Exception as e:
-        print("[Pet Shorts ERROR]", e)
-        return jsonify({"error": str(e)}), 500
-
-
-# =========================================================
-# 5) 반려동물 단일 분류 API (pet_daily)
-# =========================================================
+# ------------------------------------------------------
+# 4) Pet Daily (사진/영상 분류)
+# ------------------------------------------------------
 @app.route("/pet_daily", methods=["POST"])
-def pet_daily():
+def pet_daily_api():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
-    media_file = request.files["file"]
-    filename = media_file.filename
+    task_id = uuid4().hex
+    file = request.files["file"]
+    ext = file.filename.split(".")[-1]
+    temp_path = f"temp_{task_id}.{ext}"
+    file.save(temp_path)
 
-    ext = filename.split(".")[-1] if "." in filename else "tmp"
-    temp_path = f"temp_daily_{os.getpid()}.{ext}"
-    media_file.save(temp_path)
+    pet_q.put({"id": task_id, "path": temp_path, "mode": "daily"})
+    result = pet_res_q.get()
 
-    try:
-        PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-        result = classify_media(temp_path, project_id=PROJECT_ID)
-
-        return jsonify({
-            "message": "success",
-            "result": result
-        })
-
-    except Exception as e:
-        print("[Pet Daily ERROR]", e)
-        return jsonify({"error": str(e)}), 500
-
-    finally:
-        os.remove(temp_path) if os.path.exists(temp_path) else None
+    os.remove(temp_path)
+    return jsonify(result)
 
 
-# =========================================================
-# 6) 얼굴 위치 분석 API
-# =========================================================
-@app.route("/face_arrange", methods=["POST"])
-def face_arrange_api():
-    if "file" in request.files:
-        img_bytes = request.files["file"].read()
-    else:
-        data = request.get_json()
-        if not data or "image" not in data:
-            return jsonify({"error": "image(base64) or file required"}), 400
-        try:
-            img_bytes = base64.b64decode(data["image"])
-        except:
-            return jsonify({"error": "base64 decode failed"}), 400
+# ------------------------------------------------------
+# Worker 실행
+# ------------------------------------------------------
+def start_workers():
+    from workers.thumbnail_worker import run_thumbnail_worker
+    from workers.stt_worker import run_stt_worker
+    from workers.pet_worker import run_pet_worker
 
-    np_arr = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
-    if frame is None:
-        return jsonify({"error": "image decode failed"}), 400
-
-    try:
-        result = analyze_face_from_frame(frame)
-        return jsonify({"message": "success", "data": result})
-    except Exception as e:
-        print("[Face Arrange ERROR]", e)
-        return jsonify({"error": str(e)}), 500
+    Process(target=run_thumbnail_worker, args=(thumbnail_q, thumbnail_res_q)).start()
+    Process(target=run_stt_worker, args=(stt_q, stt_res_q)).start()
+    Process(target=run_pet_worker, args=(pet_q, pet_res_q)).start()
 
 
-# =========================================================
-# Run Flask (local only)
-# =========================================================
 if __name__ == "__main__":
+    start_workers()
     app.run(host="0.0.0.0", port=8000)
