@@ -249,7 +249,7 @@ def analyze_video_content(video_path, api_key):
         with open(audio_file_path, "rb") as f:
             audio_bytes = f.read()
 
-        model = genai.GenerativeModel("models/gemini-2.5-flash-lite")
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
 
         prompt = """
         이 오디오 내용을 한국어로 한 문장 요약하고,
