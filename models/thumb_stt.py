@@ -236,8 +236,8 @@ def analyze_video_content(video_path, api_key):
         model = genai.GenerativeModel("models/gemini-2.5-flash")
 
         prompt = """
-        이 오디오 내용을 한국어로 한 문장 요약하고,
-        영상의 주제를 반영한 간결한 제목을 생성하세요.
+        이 오디오 내용을 한국어로 한 문장 요약하되,주변 소음보다 발화 내용을 우선으로 내용을 요약하세요.
+        영상의 주제를 반영한 간결한 제목을 생성하세요. 
         반드시 JSON 형식으로:
         {
           "summary": "...",
