@@ -146,6 +146,8 @@ def find_pet_segments(video_path, project_id=None):
             segments.append((start_t, end_t))
 
     return segments
+print("반려동물 감지 결과:", result, flush=True)
+
 
 
 # -------------------------------
