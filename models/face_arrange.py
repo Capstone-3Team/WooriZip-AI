@@ -1,10 +1,9 @@
-# model.py
 import cv2
 import mediapipe as mp
 import numpy as np
 
 # ============================================
-# 1. Mediapipe FaceMesh 초기화
+# 1. Mediapipe FaceMesh 초기화 (전역 1회만)
 # ============================================
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
@@ -52,7 +51,7 @@ def analyze_face_from_frame(frame):
     bh = max_y - min_y
 
     # ---------------------------
-    # 0) 이목구비가 안 보이면 → perfect 취급 (come_in 억제)
+    # 0) 이목구비가 안 보이면 perfect 취급
     # ---------------------------
     if not facial_features_visible(face):
         return {"state": "perfect", "message": "", "is_good": True}
@@ -68,7 +67,7 @@ def analyze_face_from_frame(frame):
         }
 
     # ---------------------------
-    # 2) 얼굴 보이는 영역 비율
+    # 2) 얼굴 보이는 영역 비율 체크
     # ---------------------------
     vis_x0 = np.clip(min_x, 0, 1); vis_x1 = np.clip(max_x, 0, 1)
     vis_y0 = np.clip(min_y, 0, 1); vis_y1 = np.clip(max_y, 0, 1)
@@ -77,7 +76,7 @@ def analyze_face_from_frame(frame):
     vis_h = (vis_y1 - vis_y0) / bh if bh > 0 else 0
     visible_ratio = min(vis_w, vis_h)
 
-    if visible_ratio < 0.5:  # 얼굴 절반 이상 안 보임
+    if visible_ratio < 0.5:
         return {
             "state": "come_in",
             "message": "화면 안으로 들어오세요",
@@ -85,18 +84,14 @@ def analyze_face_from_frame(frame):
         }
 
     # ---------------------------
-    # 3) 눈이 너무 위쪽 → come_in
+    # 3) 눈 위치 체크
     # ---------------------------
     eye_ids = [33, 133, 362, 263]
     eye_ys = [face.landmark[i].y for i in eye_ids]
     avg_eye_y = sum(eye_ys) / len(eye_ys)
 
     if avg_eye_y < 0.15:
-        return {
-            "state": "come_in",
-            "message": "화면 안으로 들어오세요",
-            "is_good": False
-        }
+        return {"state": "come_in", "message": "화면 안으로 들어오세요", "is_good": False}
 
     # ---------------------------
     # 정상 상태
