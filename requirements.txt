@@ -1,9 +1,0 @@
-flask
-flask-cors
-
-google-cloud-vision
-google-generativeai
-
-pydub
-opencv-python-headless
-numpy
