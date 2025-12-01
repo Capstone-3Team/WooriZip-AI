@@ -9,10 +9,12 @@ from flask_cors import CORS
 # -------------------------------
 # 모델 import
 # -------------------------------
+# 🔥 여기서 thumb_stt.py → 너의 수정된 model.py 위치에 맞춰 변경!
 from models.thumb_stt import find_best_thumbnail, analyze_video_content
+
 from models.pet_shorts import find_pet_segments, compile_pet_shorts
 from models.pet_daily import classify_media
-from models.face_arrange import analyze_face_from_frame    # ← ⭐ NEW 추가됨
+from models.face_arrange import analyze_face_from_frame
 
 app = Flask(__name__)
 CORS(app)
@@ -73,7 +75,7 @@ def stt():
         result = analyze_video_content(temp_path, api_key)
 
         return jsonify({
-            "message": "STT + summary + title generation successful",
+            "message": "summary + title generation successful",
             "summary": result["summary"],
             "title": result["title"]
         })
@@ -176,7 +178,7 @@ def classify_daily():
 
 
 # =========================================================
-# 6) 🎯 얼굴 위치 분석 API (FastAPI → Flask 변환)
+# 6) 🎯 얼굴 위치 분석 API
 # =========================================================
 @app.route("/face_arrange", methods=["POST"])
 def face_arrange():
@@ -199,7 +201,7 @@ def face_arrange():
         except:
             return jsonify({"error": "base64 decode failed"}), 400
 
-    # OpenCV로 디코딩
+    # OpenCV 디코딩
     np_arr = np.frombuffer(img_bytes, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
@@ -217,7 +219,7 @@ def face_arrange():
 
 
 # =========================================================
-# Run server
+# Run Flask Server
 # =========================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)
