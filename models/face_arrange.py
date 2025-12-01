@@ -3,7 +3,14 @@ import mediapipe as mp
 import numpy as np
 
 # ============================================
-# 1. Mediapipe FaceMesh 초기화 (전역 1회만)
+# 0. Landmark 실패 카운터 (전역 유지)
+# ============================================
+FAILED_LANDMARK_FRAMES = 0
+FAILED_THRESHOLD = 3   # 3프레임 연속 실패 시 come_in
+
+
+# ============================================
+# 1. Mediapipe FaceMesh 초기화
 # ============================================
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
@@ -29,15 +36,34 @@ def facial_features_visible(face):
 
 
 # ============================================
-# 3. 상태 판단 함수
+# 3. 상태 판단 함수 + landmark 실패 누적 처리
 # ============================================
 def analyze_face_from_frame(frame):
+    global FAILED_LANDMARK_FRAMES
+
     h, w, _ = frame.shape
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = face_mesh.process(rgb)
 
+    # ---------------------------
+    # 0. landmark 실패 처리
+    # ---------------------------
     if not results.multi_face_landmarks:
-        return {"state": "come_in", "message": "화면 안으로 들어오세요", "is_good": False}
+        FAILED_LANDMARK_FRAMES += 1
+
+        # 🔥 3프레임 연속 실패일 때만 come_in 출력
+        if FAILED_LANDMARK_FRAMES >= FAILED_THRESHOLD:
+            return {
+                "state": "come_in",
+                "message": "화면 안으로 들어오세요",
+                "is_good": False
+            }
+        else:
+            # perfect 유지 (잠깐 흔들려도 오류 안 띄움)
+            return {"state": "perfect", "message": "", "is_good": True}
+
+    # landmark 감지 성공 → 실패 카운트 초기화
+    FAILED_LANDMARK_FRAMES = 0
 
     face = results.multi_face_landmarks[0]
 
@@ -51,13 +77,13 @@ def analyze_face_from_frame(frame):
     bh = max_y - min_y
 
     # ---------------------------
-    # 0) 이목구비가 안 보이면 perfect 취급
+    # 1) 이목구비 가려질 때 perfect 처리 (come_in 억제)
     # ---------------------------
     if not facial_features_visible(face):
         return {"state": "perfect", "message": "", "is_good": True}
 
     # ---------------------------
-    # 1) 너무 가까움 → move_back
+    # 2) 너무 가까움 → move_back
     # ---------------------------
     if bw > 0.70 or bh > 0.70:
         return {
@@ -67,33 +93,41 @@ def analyze_face_from_frame(frame):
         }
 
     # ---------------------------
-    # 2) 얼굴 보이는 영역 비율 체크
+    # 3) 얼굴 노출 비율 체크 (완화: 0.3)
     # ---------------------------
     vis_x0 = np.clip(min_x, 0, 1); vis_x1 = np.clip(max_x, 0, 1)
     vis_y0 = np.clip(min_y, 0, 1); vis_y1 = np.clip(max_y, 0, 1)
 
     vis_w = (vis_x1 - vis_x0) / bw if bw > 0 else 0
-    vis_h = (vis_y1 - vis_y0) / bh if bh > 0 else 0
+    vis_h = (vis_y_1 - vis_y0) / bh if bh > 0 else 0
     visible_ratio = min(vis_w, vis_h)
 
-    if visible_ratio < 0.3:  # 30% 이하만 경고
-    return {
-        "state": "come_in",
-        "message": "화면 안으로 들어오세요",
-        "is_good": False
-    }
+    if visible_ratio < 0.3:  # 30% 이하만 come_in
+        return {
+            "state": "come_in",
+            "message": "화면 안으로 들어오세요",
+            "is_good": False
+        }
 
     # ---------------------------
-    # 3) 눈 위치 체크
+    # 4) 눈 높이 체크
     # ---------------------------
     eye_ids = [33, 133, 362, 263]
     eye_ys = [face.landmark[i].y for i in eye_ids]
     avg_eye_y = sum(eye_ys) / len(eye_ys)
 
     if avg_eye_y < 0.15:
-        return {"state": "come_in", "message": "화면 안으로 들어오세요", "is_good": False}
+        return {
+            "state": "come_in",
+            "message": "화면 안으로 들어오세요",
+            "is_good": False
+        }
 
     # ---------------------------
     # 정상 상태
     # ---------------------------
-    return {"state": "perfect", "message": "", "is_good": True}
+    return {
+        "state": "perfect",
+        "message": "",
+        "is_good": True
+    }
