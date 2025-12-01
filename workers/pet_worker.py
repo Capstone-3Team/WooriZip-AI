@@ -1,5 +1,5 @@
 from models.pet_daily import classify_media
-from models.pet_detect import find_pet_segments, compile_pet_shorts
+from models.pet_shorts import find_pet_segments, compile_pet_shorts
 
 def run_pet_worker(task_q, result_q):
     print("🔥 Pet Worker started.")
