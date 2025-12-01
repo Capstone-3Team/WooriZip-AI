@@ -1,0 +1,19 @@
+# Flask 서버
+Flask==2.3.2
+Flask-Cors==4.0.0
+
+# AI 처리
+google-cloud-vision==3.7.2
+google-generativeai==0.5.2
+mediapipe==0.10.14
+
+# 이미지/영상 처리
+opencv-python==4.9.0.80
+pydub==0.25.1
+numpy==1.26.4
+
+# 기타
+python-dotenv==1.0.1
+
+# FFmpeg은 pip로 설치 불가 → 로컬/서버에 시스템 패키지로 설치 필요
+# brew install ffmpeg  or  apt install ffmpeg
