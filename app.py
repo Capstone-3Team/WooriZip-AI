@@ -25,7 +25,7 @@ CORS(app)
 # ============================================================
 # 1) 얼굴 정렬 (실시간) - Worker NO
 # ============================================================
-@app.route("/face_arrange", methods=["POST"])
+@app.route("/analyze", methods=["POST"])
 def face_arrange_api():
     if "file" in request.files:
         img_bytes = request.files["file"].read()
