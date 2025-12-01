@@ -2,6 +2,8 @@ import os
 import base64
 import numpy as np
 import cv2
+import importlib.metadata
+
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
