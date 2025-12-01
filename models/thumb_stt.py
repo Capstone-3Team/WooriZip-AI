@@ -1,6 +1,6 @@
 """
 웃는 얼굴 썸네일 + 요약/제목 생성
-세로 영상 자동 회전 보정 + FaceMesh + Flash Lite (최적화 버전)
+FaceMesh + Flash Lite (최적화 버전)
 """
 
 import os
@@ -11,6 +11,7 @@ import numpy as np
 import subprocess
 from pydub import AudioSegment
 from pydub.effects import speedup
+from pydub.silence import detect_nonsilent
 from google.cloud import vision
 import google.generativeai as genai
 import mediapipe as mp
@@ -26,61 +27,29 @@ vision_client = vision.ImageAnnotatorClient()
 
 
 # ============================================================
-# 1. ffprobe로 회전 정보 읽기
+# (NEW) 1. 무음 구간 제거
 # ============================================================
-
-def get_rotation(video_path):
+def remove_silence(audio: AudioSegment,
+                   min_silence_len=800,     # 0.8초 이상 무음이면 skip
+                   silence_thresh=-45):     # -45dB 아래는 사람 말 아님
     """
-    ffprobe로 영상 metadata에서 회전 정보 읽기
-    90 / 180 / 270 / 없으면 0
+    오디오에서 '말하는 부분만' 이어붙여 반환.
     """
-    try:
-        cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream_tags=rotate",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            video_path
-        ]
-        output = subprocess.check_output(cmd).decode().strip()
-        return int(output) if output else 0
-    except:
-        return 0
+    nonsilent = detect_nonsilent(
+        audio,
+        min_silence_len=min_silence_len,
+        silence_thresh=silence_thresh
+    )
 
+    if not nonsilent:
+        return audio  # 전체가 무음이면 그대로 사용
 
-def preprocess_rotation(video_path):
-    """
-    영상 자체를 ffmpeg로 회전 보정하여 픽셀 단위 회전된 버전 반환
-    """
-    rotation = get_rotation(video_path)
-    if rotation == 0:
-        return video_path  # 회전 필요 없음
-
-    rotated_path = f"{video_path}_rotated.mp4"
-
-    # ffmpeg 회전 필터 설정
-    if rotation == 90:
-        rotate_filter = "transpose=1"
-    elif rotation == 180:
-        rotate_filter = "transpose=1,transpose=1"
-    elif rotation == 270:
-        rotate_filter = "transpose=2"
-    else:
-        return video_path
-
-    cmd = [
-        "ffmpeg", "-y", "-i", video_path,
-        "-vf", rotate_filter,
-        "-c:a", "copy",
-        rotated_path
-    ]
-
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return rotated_path
-
+    chunks = [audio[start:end] for start, end in nonsilent]
+    return sum(chunks)
 
 
 # ============================================================
-# 2. FaceMesh 기반 필터링
+# 2. FaceMesh 기반 웃는 얼굴 후보 검출
 # ============================================================
 mp_face_mesh = mp.solutions.face_mesh
 mesh_detector = mp_face_mesh.FaceMesh(
@@ -114,22 +83,17 @@ def is_smile_candidate(frame):
     left = pos(LEFT_MOUTH)
     right = pos(RIGHT_MOUTH)
 
-    # 1) 입 벌어짐
     lip_distance = np.linalg.norm(upper - lower)
-
-    # 2) 입꼬리 곡률
     center = (upper + lower) / 2
     curvature = (center[1] - left[1]) + (center[1] - right[1])
 
-    # 기본 smile score
     smile_score = curvature * 0.6 + lip_distance * 0.4
 
-    # threshold 강화 제거 → 기본값만
     return smile_score > 6
 
 
 # ============================================================
-# 3. Vision API Batch 분석
+# 3. Vision API Batch 분석 (웃는 얼굴 스코어)
 # ============================================================
 LIKELIHOOD_SCORE = {
     "UNKNOWN": 0,
@@ -139,6 +103,7 @@ LIKELIHOOD_SCORE = {
     "LIKELY": 4,
     "VERY_LIKELY": 5,
 }
+
 
 def analyze_batch(frames):
     MAX_BATCH = 16
@@ -187,12 +152,9 @@ def analyze_batch(frames):
 
 
 # ============================================================
-# 4. 회전 보정 포함 후보 프레임 추출
+# 4. 웃는 얼굴 프레임 추출
 # ============================================================
 def extract_candidate_frames(video_path, sec_interval=0.35):
-    # 🔥 ffmpeg 회전 보정된 영상 사용
-    video_path = preprocess_rotation(video_path)
-
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     step = max(int(fps * sec_interval), 1)
@@ -226,7 +188,7 @@ def extract_candidate_frames(video_path, sec_interval=0.35):
 
 
 # ============================================================
-# 5. 최종 썸네일
+# 5. 최종 썸네일 선택
 # ============================================================
 def find_best_thumbnail(video_path):
     candidates = extract_candidate_frames(video_path)
@@ -254,17 +216,23 @@ def find_best_thumbnail(video_path):
 
 
 # ============================================================
-# 6. 오디오 → 1.2x → Gemini Flash Lite
+# 6. 오디오 → 무음제거 → 1.2x 속도 → Gemini
 # ============================================================
 def extract_audio(video_path, audio_path="temp_audio.mp3"):
     try:
         audio = AudioSegment.from_file(video_path)
 
-        # 오디오 길이 감소 (1.2x)
+        # 🔥 무음 제거 추가
+        audio = remove_silence(audio)
+
+        # 🔥 1.2x 속도 증가
         audio = speedup(audio, playback_speed=1.2, chunk_size=60, crossfade=40)
+
+        # 🔥 mp3 저장
         audio.export(audio_path, format="mp3")
 
         return audio_path
+
     except Exception as e:
         raise RuntimeError(f"Audio extraction failed: {e}")
 
@@ -286,7 +254,7 @@ def analyze_video_content(video_path, api_key):
         prompt = """
         이 오디오 내용을 한국어로 한 문장 요약하고,
         영상의 주제를 반영한 간결한 제목을 생성하세요.
-        반드시 JSON:
+        반드시 JSON 형식으로:
         {
           "summary": "...",
           "title": "..."
