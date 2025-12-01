@@ -76,12 +76,12 @@ def analyze_face_from_frame(frame):
     vis_h = (vis_y1 - vis_y0) / bh if bh > 0 else 0
     visible_ratio = min(vis_w, vis_h)
 
-    if visible_ratio < 0.5:
-        return {
-            "state": "come_in",
-            "message": "화면 안으로 들어오세요",
-            "is_good": False
-        }
+    if visible_ratio < 0.3:  # 30% 이하만 경고
+    return {
+        "state": "come_in",
+        "message": "화면 안으로 들어오세요",
+        "is_good": False
+    }
 
     # ---------------------------
     # 3) 눈 위치 체크
