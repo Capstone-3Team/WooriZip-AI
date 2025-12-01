@@ -138,9 +138,57 @@ def analyze_batch(frames):
     return all_results
 
 
+
+# ============================================================
+# 0. Blur 체크 함수 (흔들린 프레임 완전 제거)
+# ============================================================
+def is_blurry(frame, threshold=80):
+    """
+    Laplacian variance 기반 흔들림 감지
+    threshold ↑ : 더 엄격 (80~120 권장)
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    val = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return val < threshold
+
+
+# ============================================================
+# 1. 웃는 얼굴 후보 + Blur 제거
+# ============================================================
+def is_smile_candidate(frame):
+    # 🔥 1) Blur 먼저 검사
+    if is_blurry(frame):
+        return False
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = mesh_detector.process(rgb)
+
+    if not result.multi_face_landmarks:
+        return False
+
+    lm = result.multi_face_landmarks[0].landmark
+    h, w, _ = frame.shape
+
+    def pos(idx):
+        return np.array([lm[idx].x * w, lm[idx].y * h])
+
+    upper = pos(UPPER_LIP)
+    lower = pos(LOWER_LIP)
+    left = pos(LEFT_MOUTH)
+    right = pos(RIGHT_MOUTH)
+
+    lip_distance = np.linalg.norm(upper - lower)
+    center = (upper + lower) / 2
+    curvature = (center[1] - left[1]) + (center[1] - right[1])
+
+    smile_score = curvature * 0.6 + lip_distance * 0.4
+
+    # 🔥 2) 웃음 점수 threshold 약간 상향
+    return smile_score > 8   # 기존 6 → 8 (웃는 얼굴만 남김)
 # ============================================================
 # 3. 웃는 얼굴 후보 프레임 추출
 # ============================================================
+
 def extract_candidate_frames(video_path, sec_interval=0.35):
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
