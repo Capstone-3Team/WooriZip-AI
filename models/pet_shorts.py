@@ -2,20 +2,37 @@ import os
 import cv2
 import uuid
 import subprocess
+import boto3
 from google.cloud import vision
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # models 폴더
-GENERATED_DIR = os.path.join(BASE_DIR, "../shorts/generated")
-os.makedirs(GENERATED_DIR, exist_ok=True)
+# ============================================================
+# AWS S3 설정
+# ============================================================
+S3_ACCESS_KEY = "AKIAZGFBE7RXDDF3I357"
+S3_SECRET_KEY = "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"
+S3_BUCKET = "woorizip-local-files"
+S3_REGION = "ap-northeast-2"
 
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=S3_ACCESS_KEY,
+    aws_secret_access_key=S3_SECRET_KEY,
+    region_name=S3_REGION
+)
 
+# ============================================================
+# Google Vision 초기화
+# ============================================================
 def init_vision(project_id=None):
     if project_id:
         return vision.ImageAnnotatorClient(client_options={"quota_project_id": project_id})
     return vision.ImageAnnotatorClient()
 
 
+# ============================================================
+# 프레임 추출
+# ============================================================
 def extract_frames(video_path, sec_per_frame=1.0):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -39,13 +56,15 @@ def extract_frames(video_path, sec_per_frame=1.0):
                     "time_sec": idx / fps,
                     "image_bytes": buf.tobytes(),
                 })
-
         idx += 1
 
     cap.release()
     return frames
 
 
+# ============================================================
+# 프레임별 반려동물 존재 감지
+# ============================================================
 def detect_pet_in_frame(image_bytes, client):
     image = vision.Image(content=image_bytes)
     res = client.label_detection(image=image)
@@ -57,6 +76,9 @@ def detect_pet_in_frame(image_bytes, client):
     return False
 
 
+# ============================================================
+# 반려동물 구간 자동 탐색
+# ============================================================
 def find_pet_segments(video_path, project_id=None):
     client = init_vision(project_id)
     frames = extract_frames(video_path)
@@ -78,7 +100,7 @@ def find_pet_segments(video_path, project_id=None):
             in_seg = True
             start = r["time_sec"]
         elif not r["has_pet"] and in_seg:
-            end = r["time_sec"]
+            end = r["time_time"]
             if end - start >= 0.5:
                 segments.append((start, end))
             in_seg = False
@@ -91,16 +113,18 @@ def find_pet_segments(video_path, project_id=None):
     return segments
 
 
+# ============================================================
+# ❗ 최종 숏츠 생성 + S3 업로드
+# ============================================================
 def compile_pet_shorts(video_path, segments):
-    """
-    trim + concat filter 방식 (정확하고 안정적)
-    """
     if not segments:
         raise ValueError("반려동물 구간이 없습니다.")
 
-    out_name = f"pet_shorts_{uuid.uuid4().hex[:10]}.mp4"
-    output_path = os.path.join(GENERATED_DIR, out_name)
+    # 로컬 임시 파일명 (ffmpeg가 생성)
+    local_out_name = f"pet_shorts_{uuid.uuid4().hex[:10]}.mp4"
+    local_output_path = os.path.join("/tmp", local_out_name)
 
+    # ffmpeg에서 사용할 filter_complex 생성
     filter_parts = []
     idx = 0
 
@@ -117,14 +141,34 @@ def compile_pet_shorts(video_path, segments):
         f"{concat_inputs}concat=n={len(segments)}:v=1:a=0[out]"
     )
 
+    # ffmpeg 실행
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
         "-filter_complex", filter_complex,
         "-map", "[out]",
-        output_path
+        local_output_path
     ]
 
     subprocess.run(cmd, check=False)
 
-    return output_path
+    # =========================================================
+    # S3 업로드
+    # =========================================================
+    s3_key = f"shorts/{local_out_name}"
+
+    s3_client.upload_file(
+        local_output_path,
+        S3_BUCKET,
+        s3_key,
+        ExtraArgs={"ContentType": "video/mp4"}
+    )
+
+    # 업로드된 URL 반환
+    s3_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{s3_key}"
+
+    # 로컬 임시 파일 삭제
+    if os.path.exists(local_output_path):
+        os.remove(local_output_path)
+
+    return s3_url
