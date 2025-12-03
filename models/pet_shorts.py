@@ -1,8 +1,14 @@
 import os
 import cv2
 import uuid
+import subprocess
 from google.cloud import vision
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # models 폴더
+GENERATED_DIR = os.path.join(BASE_DIR, "../shorts/generated")
+os.makedirs(GENERATED_DIR, exist_ok=True)
+
 
 def init_vision(project_id=None):
     if project_id:
@@ -13,7 +19,7 @@ def init_vision(project_id=None):
 def extract_frames(video_path, sec_per_frame=1.0):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        raise RuntimeError("비디오를 열 수 없습니다.")
+        raise RuntimeError("비디오를 열 수 없습니다: " + video_path)
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     interval = max(int(fps * sec_per_frame), 1)
@@ -33,6 +39,7 @@ def extract_frames(video_path, sec_per_frame=1.0):
                     "time_sec": idx / fps,
                     "image_bytes": buf.tobytes(),
                 })
+
         idx += 1
 
     cap.release()
@@ -62,7 +69,6 @@ def find_pet_segments(video_path, project_id=None):
 
     results.sort(key=lambda x: x["time_sec"])
 
-    # 연속 구간 찾기
     segments = []
     in_seg = False
     start = 0
@@ -86,23 +92,39 @@ def find_pet_segments(video_path, project_id=None):
 
 
 def compile_pet_shorts(video_path, segments):
+    """
+    trim + concat filter 방식 (정확하고 안정적)
+    """
     if not segments:
         raise ValueError("반려동물 구간이 없습니다.")
 
-    os.makedirs("shorts/generated", exist_ok=True)
     out_name = f"pet_shorts_{uuid.uuid4().hex[:10]}.mp4"
-    output_path = f"shorts/generated/{out_name}"
+    output_path = os.path.join(GENERATED_DIR, out_name)
 
-    list_path = f"{output_path}.txt"
+    filter_parts = []
+    idx = 0
 
-    with open(list_path, "w") as f:
-        for s, e in segments:
-            f.write(f"file '{video_path}'\n")
-            f.write(f"inpoint {s}\n")
-            f.write(f"outpoint {e}\n")
+    for s, e in segments:
+        filter_parts.append(
+            f"[0:v]trim=start={s}:end={e},setpts=PTS-STARTPTS[v{idx}];"
+        )
+        idx += 1
 
-    cmd = f"ffmpeg -y -f concat -safe 0 -i {list_path} -c:v libx264 -preset fast -c:a aac {output_path}"
-    os.system(cmd)
+    concat_inputs = "".join(f"[v{i}]" for i in range(len(segments)))
 
-    os.remove(list_path)
+    filter_complex = (
+        "".join(filter_parts) +
+        f"{concat_inputs}concat=n={len(segments)}:v=1:a=0[out]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        output_path
+    ]
+
+    subprocess.run(cmd, check=False)
+
     return output_path
