@@ -3,23 +3,23 @@ import cv2
 import uuid
 import subprocess
 import boto3
+from dotenv import load_dotenv
 from google.cloud import vision
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ============================================================
-# AWS S3 설정
+# 환경변수 로드
 # ============================================================
-S3_ACCESS_KEY = "AKIAZGFBE7RXDDF3I357"
-S3_SECRET_KEY = "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"
-S3_BUCKET = "woorizip-local-files"
-S3_REGION = "ap-northeast-2"
+load_dotenv()
 
-s3_client = boto3.client(
-    "s3",
-    aws_access_key_id=S3_ACCESS_KEY,
-    aws_secret_access_key=S3_SECRET_KEY,
-    region_name=S3_REGION
-)
+S3_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+S3_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+S3_BUCKET = os.getenv("AWS_BUCKET_NAME", "woorizip-local-files")
+S3_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
+
+# boto3 클라이언트는 환경변수 자동 감지 가능 → credentials 생략해도 됨
+s3_client = boto3.client("s3", region_name=S3_REGION)
+
 
 # ============================================================
 # Google Vision 초기화
