@@ -19,7 +19,7 @@ import mediapipe as mp
 # ============================================================
 # 1. FaceMesh 기반 웃는 얼굴 후보 검출
 # ============================================================
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
 
