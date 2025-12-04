@@ -20,7 +20,6 @@ import mediapipe as mp
 # 1. FaceMesh 기반 웃는 얼굴 후보 검출
 # ============================================================
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
 
 mp_face_mesh = mp.solutions.face_mesh
@@ -28,7 +27,7 @@ mp_face_mesh = mp.solutions.face_mesh
 mesh_detector = mp_face_mesh.FaceMesh(
     static_image_mode=True,
     max_num_faces=1,
-    refine_landmarks=False,  # GPU 사용되는 옵션 → 반드시 False
+    refine_landmarks=True,  # GPU 사용되는 옵션 → 반드시 False
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
 )
