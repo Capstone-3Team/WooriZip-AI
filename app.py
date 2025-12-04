@@ -6,6 +6,8 @@ from uuid import uuid4
 from multiprocessing import Process, Queue
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
+load_dotenv()
 
 # 모델 import
 from models.thumb_stt import find_best_thumbnail, analyze_video_content
