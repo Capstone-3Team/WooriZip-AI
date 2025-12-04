@@ -12,7 +12,7 @@ LAST_STATE = "perfect"
 # ============================================
 # 1. FaceMesh 초기화
 # ============================================
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
 
