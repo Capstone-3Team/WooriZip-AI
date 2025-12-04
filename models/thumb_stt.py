@@ -14,25 +14,6 @@ from google.cloud import vision
 import google.generativeai as genai
 import mediapipe as mp
 
-# ============================================================
-# 0. Vision API 초기화
-# ============================================================
-if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service-account.json"
-
-vision_client = vision.ImageAnnotatorClient()
-
-
-# ============================================================
-# (OPTIONAL) — 무음 제거 함수 (더 이상 사용하지 않음)
-# ============================================================
-def remove_silence(audio: AudioSegment,
-                   min_silence_len=800,
-                   silence_thresh=-45):
-    """
-    (지금은 사용 안 함)
-    """
-    return audio
 
 
 # ============================================================
