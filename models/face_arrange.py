@@ -114,7 +114,7 @@ def analyze_face_from_frame(frame):
 
     h, w, _ = frame.shape
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = face_mesh.process(rgb)
+    results =mesh_detector.process(rgb)
 
     # 0) landmark 실패 → idle 또는 come_in
     if not results.multi_face_landmarks:
