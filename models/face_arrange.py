@@ -12,6 +12,10 @@ LAST_STATE = "perfect"
 # ============================================
 # 1. FaceMesh 초기화
 # ============================================
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+
 mp_face_mesh = mp.solutions.face_mesh
 
 mesh_detector = mp_face_mesh.FaceMesh(
