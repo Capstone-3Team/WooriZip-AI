@@ -13,14 +13,14 @@ LAST_STATE = "perfect"
 # 1. FaceMesh 초기화
 # ============================================
 mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=5,  # 🔥 여러 명 지원
+mesh_detector = mp_face_mesh.FaceMesh(
+    static_image_mode=True,  # 🔥 GPU 그래프 완전 차단 + CPU 전용
+    max_num_faces=1,
     refine_landmarks=True,
     min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-    static_image_mode=False
-
+    min_tracking_confidence=0.5
 )
+
 
 # ============================================
 # 2. 이목구비 체크
