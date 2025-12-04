@@ -20,13 +20,15 @@ import mediapipe as mp
 # 1. FaceMesh 기반 웃는 얼굴 후보 검출
 # ============================================================
 mp_face_mesh = mp.solutions.face_mesh
+
 mesh_detector = mp_face_mesh.FaceMesh(
-    static_image_mode=True,  # 🔥 GPU 그래프 완전 차단 + CPU 전용
+    static_image_mode=True,
     max_num_faces=1,
-    refine_landmarks=True,
+    refine_landmarks=False,  # GPU 사용되는 옵션 → 반드시 False
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
 )
+
 
 
 UPPER_LIP = 13
