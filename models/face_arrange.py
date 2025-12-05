@@ -1,7 +1,10 @@
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
 import cv2
 import mediapipe as mp
 import numpy as np
-import os
+
 # ============================================
 # 0. Landmark 실패 카운터 + 마지막 상태
 # ============================================
@@ -13,8 +16,7 @@ LAST_STATE = "perfect"
 # 1. FaceMesh 초기화
 # ============================================
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+
 
 mp_face_mesh = mp.solutions.face_mesh
 
