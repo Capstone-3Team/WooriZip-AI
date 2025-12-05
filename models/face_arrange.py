@@ -21,11 +21,11 @@ LAST_STATE = "perfect"
 mp_face_mesh = mp.solutions.face_mesh
 
 mesh_detector = mp_face_mesh.FaceMesh(
-    static_image_mode=True,
-    max_num_faces=1,
-    refine_landmarks=False,  # GPU 사용되는 옵션 → 반드시 False
+    max_num_faces=5,
+    refine_landmarks=False,
     min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
+    min_tracking_confidence=0.5,
+    static_image_mode=False
 )
 
 
