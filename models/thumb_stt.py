@@ -4,6 +4,9 @@ FaceMesh + Flash (최적화 버전)
 """
 
 import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
 import cv2
 import base64
 import json
@@ -20,8 +23,6 @@ import mediapipe as mp
 # 1. FaceMesh 기반 웃는 얼굴 후보 검출
 # ============================================================
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
 
 mp_face_mesh = mp.solutions.face_mesh
 
