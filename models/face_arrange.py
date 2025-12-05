@@ -1,6 +1,8 @@
 import os
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"     # GPU 비활성화
+os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"     # Mediapipe GPU 금지
+
 import cv2
 import mediapipe as mp
 import numpy as np
